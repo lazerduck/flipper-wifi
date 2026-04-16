@@ -1,0 +1,34 @@
+menu "Flipper WiFi"
+
+config FLIPPER_COMMAND_UART_PORT
+	int "Command UART port"
+	range 0 1
+	default 1
+	help
+		Select the high-power UART used for the command interface.
+		UART0 is normally shared with console/flash, so UART1 is the safer default.
+
+config FLIPPER_COMMAND_UART_BAUD_RATE
+	int "Command UART baud rate"
+	range 1200 5000000
+	default 115200
+	help
+		Baud rate for the command interface.
+
+config FLIPPER_COMMAND_UART_TX_PIN
+	int "Command UART TX GPIO"
+	range 0 30
+	default 1
+	help
+		GPIO used for command UART TX.
+		On ESP32-C6, UART1 can be routed through the GPIO matrix to free pins.
+
+config FLIPPER_COMMAND_UART_RX_PIN
+	int "Command UART RX GPIO"
+	range 0 30
+	default 0
+	help
+		GPIO used for command UART RX.
+		On ESP32-C6, UART1 can be routed through the GPIO matrix to free pins.
+
+endmenu
