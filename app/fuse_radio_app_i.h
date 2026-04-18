@@ -1,6 +1,12 @@
 #pragma once
 
 #include "fuse_radio.h"
+#include "fuse_radio_channel_picker_view.h"
+#include "fuse_radio_survey_preset_view.h"
+#include "fuse_radio_survey_progress_view.h"
+#include "fuse_radio_survey_result_view.h"
+#include "fuse_radio_watch_result_view.h"
+#include "fuse_radio_watch_live_view.h"
 #include "scenes/fuse_radio_scene.h"
 
 #include <furi.h>
@@ -30,14 +36,26 @@
 #define FUSE_RADIO_MDNS_INFO_SIZE     512U
 #define FUSE_RADIO_DISCOVER_INFO_SIZE 1024U
 #define FUSE_RADIO_PROMISCUOUS_INFO_SIZE 1024U
+#define FUSE_RADIO_PROMISCUOUS_LIVE_SIZE 192U
 #define FUSE_RADIO_DETECT_TIMEOUT_MS  5000U
 #define FUSE_RADIO_PING_INTERVAL_MS   750U
+#define FUSE_RADIO_MODE_GUARD_POLL_MS 1000U
+#define FUSE_RADIO_STARTUP_SETTLE_MS  400U
+#define FUSE_RADIO_STARTUP_RETRY_DELAY_MS 300U
+#define FUSE_RADIO_STARTUP_MAX_LINK_RETRIES 2U
+#define FUSE_RADIO_STARTUP_MAX_POWER_RETRIES 3U
 
 typedef enum {
     FuseRadioViewWidget,
     FuseRadioViewSubmenu,
     FuseRadioViewScan,
     FuseRadioViewTextInput,
+    FuseRadioViewChannelPicker,
+    FuseRadioViewSurveyPreset,
+    FuseRadioViewSurveyProgress,
+    FuseRadioViewSurveyResult,
+    FuseRadioViewWatchLive,
+    FuseRadioViewWatchResult,
 } FuseRadioView;
 
 typedef enum {
@@ -84,17 +102,21 @@ typedef enum {
     FuseRadioCustomEventWifiConnectedReady,
     FuseRadioCustomEventWifiPromiscuousRepeat,
     FuseRadioCustomEventWifiPromiscuousMenu,
+    FuseRadioCustomEventWifiPromiscuousStop,
+    FuseRadioCustomEventWifiWatchChannelStart,
+    FuseRadioCustomEventWifiSurveyPresetStart,
+    FuseRadioCustomEventWifiSurveyDone,
 } FuseRadioCustomEvent;
 
 typedef enum {
     FuseRadioPromiscuousPresetNone,
     FuseRadioPromiscuousPresetEnterChannel1,
     FuseRadioPromiscuousPresetExit,
-    FuseRadioPromiscuousPresetSurveyQuick,
-    FuseRadioPromiscuousPresetSurveyFull,
-    FuseRadioPromiscuousPresetWatchChannel1,
-    FuseRadioPromiscuousPresetWatchChannel6,
-    FuseRadioPromiscuousPresetWatchChannel11,
+    FuseRadioPromiscuousPresetSurvey11611,
+    FuseRadioPromiscuousPresetSurvey111,
+    FuseRadioPromiscuousPresetSurvey14814,
+    FuseRadioPromiscuousPresetSurvey1357911,
+    FuseRadioPromiscuousPresetWatchChannel,
 } FuseRadioPromiscuousPreset;
 
 typedef struct {
@@ -113,6 +135,12 @@ struct FuseRadioApp {
     Submenu* submenu;
     FuseRadioScanView* scan_view;
     TextInput* text_input;
+    FuseRadioChannelPickerView* channel_picker_view;
+    FuseRadioSurveyPresetView* survey_preset_view;
+    FuseRadioSurveyProgressView* survey_progress_view;
+    FuseRadioSurveyResultView* survey_result_view;
+    FuseRadioWatchLiveView* watch_live_view;
+    FuseRadioWatchResultView* watch_result_view;
 
     Expansion* expansion;
     Power* power;
@@ -129,6 +157,9 @@ struct FuseRadioApp {
     FuseRadioTextInputMode text_input_mode;
     FuseRadioPromiscuousPreset promiscuous_preset;
     FuseRadioScanResults scan_results;
+    FuseRadioSurveyResults survey_results;
+    FuseRadioWatchSummary watch_summary;
+    FuseRadioWatchDevice watch_devices[FUSE_RADIO_MAX_WATCH_DEVICES];
 
     char line_buffer[FUSE_RADIO_MAX_LINE_LENGTH + 1U];
     size_t line_length;
@@ -150,22 +181,37 @@ struct FuseRadioApp {
     char discover_info_text[FUSE_RADIO_DISCOVER_INFO_SIZE];
     char mdns_info_text[FUSE_RADIO_MDNS_INFO_SIZE];
     char promiscuous_info_text[FUSE_RADIO_PROMISCUOUS_INFO_SIZE];
+    char promiscuous_live_text[FUSE_RADIO_PROMISCUOUS_LIVE_SIZE];
     uint16_t wifi_status_reason;
     uint16_t discover_scanned_count;
     uint16_t discover_found_count;
     uint32_t discover_duration_ms;
+    uint32_t promiscuous_live_elapsed_ms;
+    uint32_t promiscuous_live_total_frames;
+    uint16_t promiscuous_live_unique_count;
+    uint16_t promiscuous_live_beacon_count;
+    int16_t promiscuous_live_max_rssi;
     uint8_t mdns_count;
     uint8_t mdns_truncated_count;
+    uint8_t promiscuous_watch_channel;
+    uint8_t survey_selected_channel_index;
+    uint8_t watch_device_count;
     uint8_t saved_credential_count;
     bool wifi_connected;
     bool connect_password_saved;
     bool connect_password_auto_used;
     bool connect_flow_active;
+    bool promiscuous_watch_live_active;
+    bool promiscuous_watch_stop_pending;
 
     FuseRadioSavedCredential saved_credentials[FUSE_RADIO_MAX_SAVED_NETWORKS];
 
     uint32_t detect_started_at;
     uint32_t last_ping_at;
+    uint32_t last_mode_guard_poll_at;
+    uint32_t next_startup_action_at;
+    uint8_t startup_link_retry_count;
+    uint8_t startup_power_retry_count;
     bool rx_started;
     bool expansion_disabled;
     bool otg_enabled;
@@ -194,8 +240,9 @@ bool fuse_radio_app_start_wifi_discover(FuseRadioApp* app);
 bool fuse_radio_app_start_wifi_mdns_query(FuseRadioApp* app);
 bool fuse_radio_app_start_wifi_promiscuous_enter(FuseRadioApp* app, uint8_t channel);
 bool fuse_radio_app_start_wifi_promiscuous_exit(FuseRadioApp* app);
-bool fuse_radio_app_start_wifi_promiscuous_survey(FuseRadioApp* app, bool quick);
+bool fuse_radio_app_start_wifi_promiscuous_survey(FuseRadioApp* app, FuseRadioSurveyPreset preset);
 bool fuse_radio_app_start_wifi_promiscuous_watch(FuseRadioApp* app, uint8_t channel);
+bool fuse_radio_app_stop_wifi_promiscuous_watch(FuseRadioApp* app);
 bool fuse_radio_app_repeat_wifi_promiscuous_action(FuseRadioApp* app);
 void fuse_radio_app_process_rx(FuseRadioApp* app);
 void fuse_radio_app_handle_tick(FuseRadioApp* app);

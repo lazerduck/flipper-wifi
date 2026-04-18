@@ -175,6 +175,53 @@ static bool fuse_radio_app_custom_event_callback(void* context, uint32_t event) 
     return scene_manager_handle_custom_event(app->scene_manager, event);
 }
 
+typedef struct {
+    FuseRadioSurveyPreset preset;
+    FuseRadioPromiscuousPreset repeat_preset;
+    const char* command;
+    uint8_t channels[FUSE_RADIO_MAX_SURVEY_CHANNELS];
+    uint8_t channel_count;
+    uint16_t dwell_ms;
+} FuseRadioSurveyPresetConfig;
+
+static const FuseRadioSurveyPresetConfig fuse_radio_app_survey_presets[] = {
+    {.preset = FuseRadioSurveyPreset11611,
+     .repeat_preset = FuseRadioPromiscuousPresetSurvey11611,
+     .command = "WIFI PROMISCUOUS SURVEY channels=1,6,11 dwell_ms=200\n",
+     .channels = {1U, 6U, 11U},
+     .channel_count = 3U,
+     .dwell_ms = 200U},
+    {.preset = FuseRadioSurveyPreset111,
+     .repeat_preset = FuseRadioPromiscuousPresetSurvey111,
+     .command = "WIFI PROMISCUOUS SURVEY channels=1,2,3,4,5,6,7,8,9,10,11 dwell_ms=200\n",
+     .channels = {1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U, 9U, 10U, 11U},
+     .channel_count = 11U,
+     .dwell_ms = 200U},
+    {.preset = FuseRadioSurveyPreset14814,
+     .repeat_preset = FuseRadioPromiscuousPresetSurvey14814,
+     .command = "WIFI PROMISCUOUS SURVEY channels=1,4,8,14 dwell_ms=200\n",
+     .channels = {1U, 4U, 8U, 14U},
+     .channel_count = 4U,
+     .dwell_ms = 200U},
+    {.preset = FuseRadioSurveyPreset1357911,
+     .repeat_preset = FuseRadioPromiscuousPresetSurvey1357911,
+     .command = "WIFI PROMISCUOUS SURVEY channels=1,3,5,7,9,11 dwell_ms=200\n",
+     .channels = {1U, 3U, 5U, 7U, 9U, 11U},
+     .channel_count = 6U,
+     .dwell_ms = 200U},
+};
+
+static const FuseRadioSurveyPresetConfig*
+    fuse_radio_app_get_survey_preset_config(FuseRadioSurveyPreset preset) {
+    for(size_t index = 0U; index < COUNT_OF(fuse_radio_app_survey_presets); index++) {
+        if(fuse_radio_app_survey_presets[index].preset == preset) {
+            return &fuse_radio_app_survey_presets[index];
+        }
+    }
+
+    return &fuse_radio_app_survey_presets[0];
+}
+
 static bool fuse_radio_app_back_event_callback(void* context) {
     FuseRadioApp* app = context;
 
@@ -194,6 +241,47 @@ static void fuse_radio_app_scan_view_callback(FuseRadioScanViewAction action, vo
     } else if(action == FuseRadioScanViewActionSelect) {
         view_dispatcher_send_custom_event(app->view_dispatcher, FuseRadioCustomEventScanSelect);
     }
+}
+
+static void fuse_radio_app_watch_result_view_callback(
+    FuseRadioWatchResultViewAction action,
+    void* context) {
+    FuseRadioApp* app = context;
+
+    if(action == FuseRadioWatchResultViewActionRepeat) {
+        view_dispatcher_send_custom_event(
+            app->view_dispatcher, FuseRadioCustomEventWifiPromiscuousRepeat);
+    }
+}
+
+static void fuse_radio_app_survey_preset_view_callback(FuseRadioSurveyPreset preset, void* context) {
+    FuseRadioApp* app = context;
+
+    app->survey_results.preset = preset;
+    view_dispatcher_send_custom_event(
+        app->view_dispatcher, FuseRadioCustomEventWifiSurveyPresetStart);
+}
+
+static void fuse_radio_app_survey_result_view_callback(
+    FuseRadioSurveyResultViewAction action,
+    void* context) {
+    FuseRadioApp* app = context;
+
+    if(action == FuseRadioSurveyResultViewActionRepeat) {
+        view_dispatcher_send_custom_event(
+            app->view_dispatcher, FuseRadioCustomEventWifiPromiscuousRepeat);
+    }
+}
+
+static void fuse_radio_app_watch_channel_callback(uint8_t channel, void* context) {
+    FuseRadioApp* app = context;
+    app->promiscuous_watch_channel = channel;
+    view_dispatcher_send_custom_event(
+        app->view_dispatcher, FuseRadioCustomEventWifiWatchChannelStart);
+}
+static void fuse_radio_app_watch_live_view_callback(void* context) {
+    FuseRadioApp* app = context;
+    view_dispatcher_send_custom_event(app->view_dispatcher, FuseRadioCustomEventWifiPromiscuousStop);
 }
 
 void fuse_radio_app_text_input_callback(void* context) {
@@ -250,7 +338,9 @@ static void fuse_radio_app_wifi_promiscuous_button_callback(
 
     if(button == GuiButtonTypeCenter) {
         view_dispatcher_send_custom_event(
-            app->view_dispatcher, FuseRadioCustomEventWifiPromiscuousRepeat);
+            app->view_dispatcher,
+            app->promiscuous_watch_live_active ? FuseRadioCustomEventWifiPromiscuousStop :
+                                                 FuseRadioCustomEventWifiPromiscuousRepeat);
     } else if(button == GuiButtonTypeLeft) {
         view_dispatcher_send_custom_event(
             app->view_dispatcher, FuseRadioCustomEventWifiPromiscuousMenu);
@@ -314,7 +404,103 @@ static void fuse_radio_app_reset_mdns_results(FuseRadioApp* app) {
 
 static void fuse_radio_app_reset_promiscuous_results(FuseRadioApp* app) {
     app->promiscuous_info_text[0] = '\0';
+    app->promiscuous_live_text[0] = '\0';
+    memset(&app->survey_results, 0, sizeof(app->survey_results));
+    memset(&app->watch_summary, 0, sizeof(app->watch_summary));
+    memset(app->watch_devices, 0, sizeof(app->watch_devices));
+    app->promiscuous_live_elapsed_ms = 0U;
+    app->promiscuous_live_total_frames = 0U;
+    app->promiscuous_live_unique_count = 0U;
+    app->promiscuous_live_beacon_count = 0U;
+    app->promiscuous_live_max_rssi = -127;
+    app->watch_device_count = 0U;
+    app->promiscuous_watch_live_active = false;
+    app->promiscuous_watch_stop_pending = false;
     app->promiscuous_dirty = true;
+}
+
+static void fuse_radio_app_prepare_survey_state(FuseRadioApp* app, FuseRadioSurveyPreset preset) {
+    const FuseRadioSurveyPresetConfig* config = fuse_radio_app_get_survey_preset_config(preset);
+
+    memset(&app->survey_results, 0, sizeof(app->survey_results));
+    app->survey_results.preset = preset;
+    app->survey_results.expected_count = config->channel_count;
+    app->survey_results.current_channel = config->channels[0];
+    app->survey_results.dwell_ms = config->dwell_ms;
+    app->survey_results.active = true;
+
+    for(uint8_t index = 0U; index < config->channel_count; index++) {
+        app->survey_results.channels[index].channel = config->channels[index];
+    }
+}
+
+static void fuse_radio_app_set_promiscuous_live_text(FuseRadioApp* app, const char* fmt, ...) {
+    va_list args;
+
+    va_start(args, fmt);
+    vsnprintf(app->promiscuous_live_text, sizeof(app->promiscuous_live_text), fmt, args);
+    va_end(args);
+    app->promiscuous_dirty = true;
+}
+static void fuse_radio_app_refresh_promiscuous_live_view(FuseRadioApp* app) {
+    FuseRadioWatchLiveSnapshot snapshot = {
+        .channel = app->promiscuous_watch_channel,
+        .elapsed_ms = app->promiscuous_live_elapsed_ms,
+        .total_frames = app->promiscuous_live_total_frames,
+        .unique_count = app->promiscuous_live_unique_count,
+        .beacon_count = app->promiscuous_live_beacon_count,
+        .max_rssi = app->promiscuous_live_max_rssi,
+        .stop_pending = app->promiscuous_watch_stop_pending,
+    };
+
+    fuse_radio_watch_live_view_set_snapshot(app->watch_live_view, &snapshot);
+    app->promiscuous_dirty = false;
+}
+
+static void fuse_radio_app_update_watch_device_roles(FuseRadioApp* app) {
+    uint8_t best_index = 0U;
+    bool found = false;
+
+    for(uint8_t index = 0U; index < app->watch_device_count; index++) {
+        app->watch_devices[index].likely_ap = false;
+    }
+
+    for(uint8_t index = 0U; index < app->watch_device_count; index++) {
+        if(!found || app->watch_devices[index].beacons > app->watch_devices[best_index].beacons ||
+           (app->watch_devices[index].beacons == app->watch_devices[best_index].beacons &&
+            app->watch_devices[index].frames > app->watch_devices[best_index].frames)) {
+            best_index = index;
+            found = true;
+        }
+    }
+
+    if(found) {
+        app->watch_devices[best_index].likely_ap = true;
+    }
+}
+
+static void fuse_radio_app_refresh_watch_result_view(FuseRadioApp* app) {
+    fuse_radio_watch_result_view_set_data(
+        app->watch_result_view, &app->watch_summary, app->watch_devices, app->watch_device_count);
+    app->promiscuous_dirty = false;
+}
+
+static void fuse_radio_app_refresh_survey_progress_view(FuseRadioApp* app) {
+    FuseRadioSurveyProgressSnapshot snapshot = {
+        .current_channel = app->survey_results.current_channel,
+        .completed_count = app->survey_results.completed_count,
+        .total_count = app->survey_results.expected_count,
+        .progress_percent = app->survey_results.progress_percent,
+        .animation_frame = 0U,
+    };
+
+    fuse_radio_survey_progress_view_set_snapshot(app->survey_progress_view, &snapshot);
+    app->promiscuous_dirty = false;
+}
+
+static void fuse_radio_app_refresh_survey_result_view(FuseRadioApp* app) {
+    fuse_radio_survey_result_view_set_data(app->survey_result_view, &app->survey_results);
+    app->promiscuous_dirty = false;
 }
 
 static void fuse_radio_app_reset_discover_results(FuseRadioApp* app) {
@@ -441,12 +627,106 @@ static bool fuse_radio_app_enable_otg(FuseRadioApp* app) {
     power_enable_otg(app->power, true);
     power_get_info(app->power, &power_info);
     if(!power_info.is_otg_enabled) {
-        fuse_radio_app_set_error(app, "Cannot enable OTG 5V");
         return false;
     }
 
     app->otg_enabled = true;
     return true;
+}
+
+static void fuse_radio_app_reset_session_state(FuseRadioApp* app) {
+    fuse_radio_app_reset_scan_results(app);
+    fuse_radio_app_reset_discover_results(app);
+    fuse_radio_app_reset_mdns_results(app);
+    fuse_radio_app_reset_promiscuous_results(app);
+    fuse_radio_app_reset_wifi_status(app);
+    app->current_request = FuseRadioRequestNone;
+    app->text_input_mode = FuseRadioTextInputNone;
+    app->promiscuous_preset = FuseRadioPromiscuousPresetNone;
+    app->connect_flow_active = false;
+    app->line_length = 0U;
+    app->line_overflow = false;
+    app->module_detect_event_sent = false;
+    app->last_error[0] = '\0';
+}
+
+static bool fuse_radio_app_begin_uart_detection(FuseRadioApp* app) {
+    if(!app->insomnia_active) {
+        furi_hal_power_insomnia_enter();
+        app->insomnia_active = true;
+    }
+
+    app->serial_handle = furi_hal_serial_control_acquire(FuriHalSerialIdUsart);
+    if(!app->serial_handle) {
+        fuse_radio_app_set_error(app, "Cannot acquire USART");
+        return false;
+    }
+
+    furi_hal_serial_init(app->serial_handle, FUSE_RADIO_UART_BAUD_RATE);
+    furi_hal_serial_configure_framing(
+        app->serial_handle,
+        FuriHalSerialDataBits8,
+        FuriHalSerialParityNone,
+        FuriHalSerialStopBits1);
+    furi_hal_serial_async_rx_start(
+        app->serial_handle, fuse_radio_app_serial_rx_callback, app, false);
+    app->rx_started = true;
+
+    app->detect_started_at = furi_get_tick();
+    app->last_ping_at = 0U;
+    app->last_mode_guard_poll_at = 0U;
+    app->next_startup_action_at = app->detect_started_at + FUSE_RADIO_STARTUP_SETTLE_MS;
+    app->module_state = FuseRadioModuleStateWaitingReady;
+    fuse_radio_app_set_status(app, "Power stable. Waiting for ESP boot.");
+    return true;
+}
+
+static bool fuse_radio_app_bootstrap_session(FuseRadioApp* app, bool reset_retry_state) {
+    furi_assert(app);
+
+    fuse_radio_app_reset_session_state(app);
+    if(reset_retry_state) {
+        app->startup_link_retry_count = 0U;
+        app->startup_power_retry_count = 0U;
+    }
+
+    app->module_state = FuseRadioModuleStatePowering;
+    fuse_radio_app_set_status(app, "Powering ESP module from OTG.");
+
+    if(!app->expansion) {
+        app->expansion = furi_record_open(RECORD_EXPANSION);
+    }
+
+    if(app->expansion && !app->expansion_disabled) {
+        expansion_disable(app->expansion);
+        app->expansion_disabled = true;
+    }
+
+    if(!app->otg_enabled) {
+        if(!fuse_radio_app_enable_otg(app)) {
+            app->startup_power_retry_count++;
+            if(app->startup_power_retry_count >= FUSE_RADIO_STARTUP_MAX_POWER_RETRIES) {
+                fuse_radio_app_set_error(app, "Cannot enable OTG 5V");
+                return false;
+            }
+
+            app->module_state = FuseRadioModuleStatePowering;
+            app->next_startup_action_at =
+                furi_get_tick() + FUSE_RADIO_STARTUP_RETRY_DELAY_MS;
+            fuse_radio_app_set_status(app, "Starting 5V rail. Retrying...");
+            return true;
+        }
+    }
+
+    app->startup_power_retry_count = 0U;
+
+    if(app->otg_enabled) {
+        fuse_radio_app_set_status(app, "OTG 5V enabled. Starting UART link.");
+    } else {
+        fuse_radio_app_set_status(app, "USB 5V detected. Starting UART link.");
+    }
+
+    return fuse_radio_app_begin_uart_detection(app);
 }
 
 static void fuse_radio_app_disable_otg(FuseRadioApp* app) {
@@ -569,23 +849,25 @@ static bool fuse_radio_app_send_wifi_promiscuous_exit_command(FuseRadioApp* app)
     return fuse_radio_app_send_line(app, "WIFI PROMISCUOUS EXIT\n");
 }
 
-static bool fuse_radio_app_send_wifi_promiscuous_survey_command(FuseRadioApp* app, bool quick) {
-    if(quick) {
-        return fuse_radio_app_send_line(
-            app, "WIFI PROMISCUOUS SURVEY channels=1,6,11 dwell_ms=200\n");
-    }
-
-    return fuse_radio_app_send_line(app, "WIFI PROMISCUOUS SURVEY\n");
+static bool fuse_radio_app_send_wifi_promiscuous_survey_command(
+    FuseRadioApp* app,
+    FuseRadioSurveyPreset preset) {
+    const FuseRadioSurveyPresetConfig* config = fuse_radio_app_get_survey_preset_config(preset);
+    return fuse_radio_app_send_line(app, config->command);
 }
 
 static bool fuse_radio_app_send_wifi_promiscuous_watch_command(FuseRadioApp* app, uint8_t channel) {
-    char command[80];
+    char command[64];
     snprintf(
         command,
         sizeof(command),
-        "WIFI PROMISC WATCH channel=%u duration_ms=3000\n",
+        "WIFI PROMISC WATCH channel=%u\n",
         channel);
     return fuse_radio_app_send_line(app, command);
+}
+
+static bool fuse_radio_app_send_wifi_promiscuous_watch_stop_command(FuseRadioApp* app) {
+    return fuse_radio_app_send_line(app, "WIFI PROMISC WATCH_STOP\n");
 }
 
 bool fuse_radio_app_request_wifi_status(FuseRadioApp* app) {
@@ -756,7 +1038,9 @@ bool fuse_radio_app_start_wifi_promiscuous_exit(FuseRadioApp* app) {
     return true;
 }
 
-bool fuse_radio_app_start_wifi_promiscuous_survey(FuseRadioApp* app, bool quick) {
+bool fuse_radio_app_start_wifi_promiscuous_survey(FuseRadioApp* app, FuseRadioSurveyPreset preset) {
+    const FuseRadioSurveyPresetConfig* config = fuse_radio_app_get_survey_preset_config(preset);
+
     if(app->module_state != FuseRadioModuleStateDetected) {
         fuse_radio_app_reset_promiscuous_results(app);
         fuse_radio_app_append_promiscuous_text(app, "Board is not ready.");
@@ -764,15 +1048,13 @@ bool fuse_radio_app_start_wifi_promiscuous_survey(FuseRadioApp* app, bool quick)
     }
 
     app->current_request = FuseRadioRequestPromiscuousSurvey;
-    app->promiscuous_preset =
-        quick ? FuseRadioPromiscuousPresetSurveyQuick : FuseRadioPromiscuousPresetSurveyFull;
+    app->promiscuous_preset = config->repeat_preset;
     fuse_radio_app_set_wifi_action(app, FuseRadioWifiActionSurveying, "SURVEYING");
     fuse_radio_app_reset_promiscuous_results(app);
-    fuse_radio_app_append_promiscuous_text(
-        app,
-        quick ? "Survey\nChannels: 1, 6, 11\n\n" : "Survey\nChannels: 1 through 11\n\n");
+    fuse_radio_app_prepare_survey_state(app, preset);
+    fuse_radio_app_append_promiscuous_text(app, "Survey running\n");
 
-    if(!fuse_radio_app_send_wifi_promiscuous_survey_command(app, quick)) {
+    if(!fuse_radio_app_send_wifi_promiscuous_survey_command(app, preset)) {
         app->current_request = FuseRadioRequestNone;
         fuse_radio_app_set_wifi_action(app, FuseRadioWifiActionNone, "NONE");
         fuse_radio_app_reset_promiscuous_results(app);
@@ -791,18 +1073,17 @@ bool fuse_radio_app_start_wifi_promiscuous_watch(FuseRadioApp* app, uint8_t chan
     }
 
     app->current_request = FuseRadioRequestPromiscuousWatch;
-    if(channel == 1U) {
-        app->promiscuous_preset = FuseRadioPromiscuousPresetWatchChannel1;
-    } else if(channel == 6U) {
-        app->promiscuous_preset = FuseRadioPromiscuousPresetWatchChannel6;
-    } else {
-        app->promiscuous_preset = FuseRadioPromiscuousPresetWatchChannel11;
-    }
+    app->promiscuous_preset = FuseRadioPromiscuousPresetWatchChannel;
+    app->promiscuous_watch_channel = channel;
 
     fuse_radio_app_set_wifi_action(app, FuseRadioWifiActionWatching, "WATCHING");
     fuse_radio_app_reset_promiscuous_results(app);
-    fuse_radio_app_append_promiscuous_text(
-        app, "Watch\nChannel: %u\nDuration: 3000 ms\n\n", channel);
+    app->promiscuous_watch_live_active = true;
+    app->promiscuous_live_max_rssi = -127;
+    fuse_radio_app_set_promiscuous_live_text(
+        app,
+        "Ch %u\nStarting watch...\n\nFrames: -\nUnique: -\nBeacons: -\nRSSI: -",
+        channel);
 
     if(!fuse_radio_app_send_wifi_promiscuous_watch_command(app, channel)) {
         app->current_request = FuseRadioRequestNone;
@@ -815,22 +1096,46 @@ bool fuse_radio_app_start_wifi_promiscuous_watch(FuseRadioApp* app, uint8_t chan
     return true;
 }
 
+bool fuse_radio_app_stop_wifi_promiscuous_watch(FuseRadioApp* app) {
+    if(app->current_request != FuseRadioRequestPromiscuousWatch ||
+       !app->promiscuous_watch_live_active || app->promiscuous_watch_stop_pending) {
+        return false;
+    }
+
+    app->promiscuous_watch_stop_pending = true;
+    fuse_radio_app_set_promiscuous_live_text(
+        app,
+        "Ch %u\nStopping watch...\n\nFrames: pending\nUnique: pending\nBeacons: pending\nRSSI: pending",
+        app->promiscuous_watch_channel);
+
+    if(!fuse_radio_app_send_wifi_promiscuous_watch_stop_command(app)) {
+        app->promiscuous_watch_stop_pending = false;
+        fuse_radio_app_set_promiscuous_live_text(
+            app,
+            "Ch %u\nStop failed\n\nPress center to retry stop.",
+            app->promiscuous_watch_channel);
+        return false;
+    }
+
+    return true;
+}
+
 bool fuse_radio_app_repeat_wifi_promiscuous_action(FuseRadioApp* app) {
     switch(app->promiscuous_preset) {
     case FuseRadioPromiscuousPresetEnterChannel1:
         return fuse_radio_app_start_wifi_promiscuous_enter(app, 1U);
     case FuseRadioPromiscuousPresetExit:
         return fuse_radio_app_start_wifi_promiscuous_exit(app);
-    case FuseRadioPromiscuousPresetSurveyQuick:
-        return fuse_radio_app_start_wifi_promiscuous_survey(app, true);
-    case FuseRadioPromiscuousPresetSurveyFull:
-        return fuse_radio_app_start_wifi_promiscuous_survey(app, false);
-    case FuseRadioPromiscuousPresetWatchChannel1:
-        return fuse_radio_app_start_wifi_promiscuous_watch(app, 1U);
-    case FuseRadioPromiscuousPresetWatchChannel6:
-        return fuse_radio_app_start_wifi_promiscuous_watch(app, 6U);
-    case FuseRadioPromiscuousPresetWatchChannel11:
-        return fuse_radio_app_start_wifi_promiscuous_watch(app, 11U);
+    case FuseRadioPromiscuousPresetSurvey11611:
+        return fuse_radio_app_start_wifi_promiscuous_survey(app, FuseRadioSurveyPreset11611);
+    case FuseRadioPromiscuousPresetSurvey111:
+        return fuse_radio_app_start_wifi_promiscuous_survey(app, FuseRadioSurveyPreset111);
+    case FuseRadioPromiscuousPresetSurvey14814:
+        return fuse_radio_app_start_wifi_promiscuous_survey(app, FuseRadioSurveyPreset14814);
+    case FuseRadioPromiscuousPresetSurvey1357911:
+        return fuse_radio_app_start_wifi_promiscuous_survey(app, FuseRadioSurveyPreset1357911);
+    case FuseRadioPromiscuousPresetWatchChannel:
+        return fuse_radio_app_start_wifi_promiscuous_watch(app, app->promiscuous_watch_channel);
     case FuseRadioPromiscuousPresetNone:
     default:
         return false;
@@ -840,6 +1145,8 @@ bool fuse_radio_app_repeat_wifi_promiscuous_action(FuseRadioApp* app) {
 static void fuse_radio_app_mark_detected(FuseRadioApp* app) {
     app->module_state = FuseRadioModuleStateDetected;
     app->module_detect_event_sent = false;
+    app->startup_link_retry_count = 0U;
+    app->startup_power_retry_count = 0U;
     app->last_error[0] = '\0';
     fuse_radio_app_set_status(app, "Board detected. Opening control menu.");
 }
@@ -1106,6 +1413,12 @@ static void fuse_radio_app_parse_wifi_status(FuseRadioApp* app, const char* line
 }
 
 static void fuse_radio_app_handle_error_line(FuseRadioApp* app, const char* line) {
+    if(app->module_state != FuseRadioModuleStateDetected &&
+       (strcmp(line, "ERR UNKNOWN_COMMAND") == 0 ||
+        strcmp(line, "ERR UNKNOWN_WIFI_COMMAND") == 0)) {
+        return;
+    }
+
     if(app->current_request == FuseRadioRequestScan ||
        app->wifi_state == FuseRadioWifiStateScanning ||
        app->wifi_state == FuseRadioWifiStateScanRequested) {
@@ -1276,32 +1589,77 @@ static void fuse_radio_app_handle_line(FuseRadioApp* app, const char* line) {
     } else if(strncmp(line, "SURVEY channel=", 15) == 0) {
         const char* channel = strstr(line, "channel=");
         const char* total = strstr(line, " total=");
+        const char* mgmt = strstr(line, " mgmt=");
+        const char* data = strstr(line, " data=");
+        const char* ctrl = strstr(line, " ctrl=");
+        const char* misc = strstr(line, " misc=");
         const char* unique = strstr(line, " unique=");
         const char* max_rssi = strstr(line, " max_rssi=");
         const char* beacons = strstr(line, " beacons=");
+        const char* deauth = strstr(line, " deauth=");
+        const char* duration = strstr(line, " duration_ms=");
 
-        if(channel && total && unique && max_rssi && beacons) {
+        if(channel && total && mgmt && data && ctrl && misc && unique && max_rssi && beacons &&
+           deauth && duration) {
             unsigned long channel_value = strtoul(channel + 8, NULL, 10);
-            unsigned long total_value = strtoul(total + 7, NULL, 10);
-            unsigned long unique_value = strtoul(unique + 8, NULL, 10);
-            long max_rssi_value = strtol(max_rssi + 10, NULL, 10);
-            unsigned long beacon_value = strtoul(beacons + 9, NULL, 10);
+            uint8_t result_index = app->survey_results.completed_count;
+
+            if(result_index < app->survey_results.expected_count) {
+                FuseRadioSurveyChannelResult* result = &app->survey_results.channels[result_index];
+                result->channel = (uint8_t)channel_value;
+                result->total_frames = (uint32_t)strtoul(total + 7, NULL, 10);
+                result->management_frames = (uint32_t)strtoul(mgmt + 6, NULL, 10);
+                result->data_frames = (uint32_t)strtoul(data + 6, NULL, 10);
+                result->control_frames = (uint32_t)strtoul(ctrl + 6, NULL, 10);
+                result->misc_frames = (uint32_t)strtoul(misc + 6, NULL, 10);
+                result->beacon_frames = (uint16_t)strtoul(beacons + 9, NULL, 10);
+                result->deauth_frames = (uint16_t)strtoul(deauth + 8, NULL, 10);
+                result->unique_count = (uint16_t)strtoul(unique + 8, NULL, 10);
+                result->max_rssi = (int16_t)strtol(max_rssi + 10, NULL, 10);
+                result->duration_ms = (uint32_t)strtoul(duration + 13, NULL, 10);
+                result->has_result = true;
+                app->survey_results.result_count = result_index + 1U;
+                app->survey_results.completed_count = result_index + 1U;
+                app->survey_results.progress_percent =
+                    (uint8_t)((app->survey_results.completed_count * 100U) /
+                              app->survey_results.expected_count);
+                if(app->survey_results.completed_count < app->survey_results.expected_count) {
+                    app->survey_results.current_channel =
+                        app->survey_results.channels[app->survey_results.completed_count].channel;
+                }
+            }
+
             fuse_radio_app_append_promiscuous_text(
                 app,
                 "CH %lu\nFrames: %lu\nUnique: %lu\nBeacons: %lu\nMax RSSI: %ld dBm\n\n",
                 channel_value,
-                total_value,
-                unique_value,
-                beacon_value,
-                max_rssi_value);
+                strtoul(total + 7, NULL, 10),
+                strtoul(unique + 8, NULL, 10),
+                strtoul(beacons + 9, NULL, 10),
+                strtol(max_rssi + 10, NULL, 10));
+            app->promiscuous_dirty = true;
         } else {
             fuse_radio_app_append_promiscuous_text(app, "%s\n\n", line);
         }
     } else if(strncmp(line, "SURVEY_DONE ", 12) == 0) {
         const char* channels = strstr(line, "channels=");
+        const char* dwell = strstr(line, " dwell_ms=");
+        const char* duration = strstr(line, " duration_ms=");
         const char* recommended = strstr(line, " recommended=");
         unsigned long channel_count = channels ? strtoul(channels + 9, NULL, 10) : 0UL;
         unsigned long recommended_channel = recommended ? strtoul(recommended + 13, NULL, 10) : 0UL;
+        app->survey_results.result_count = (uint8_t)channel_count;
+        app->survey_results.completed_count = (uint8_t)channel_count;
+        app->survey_results.recommended_channel = (uint8_t)recommended_channel;
+        app->survey_results.progress_percent = 100U;
+        app->survey_results.active = false;
+        app->survey_results.complete = true;
+        if(dwell) {
+            app->survey_results.dwell_ms = (uint16_t)strtoul(dwell + 10, NULL, 10);
+        }
+        if(duration) {
+            app->survey_results.duration_ms = (uint32_t)strtoul(duration + 13, NULL, 10);
+        }
         fuse_radio_app_append_promiscuous_text(
             app,
             "Survey complete\nChannels: %lu\nRecommended: %lu\n",
@@ -1314,35 +1672,146 @@ static void fuse_radio_app_handle_line(FuseRadioApp* app, const char* line) {
             "PROMISCUOUS",
             FuseRadioWifiActionNone,
             "NONE");
-    } else if(strncmp(line, "WATCH channel=", 14) == 0) {
+        app->promiscuous_dirty = true;
+        view_dispatcher_send_custom_event(app->view_dispatcher, FuseRadioCustomEventWifiSurveyDone);
+    } else if(strncmp(line, "WATCH_STARTED ", 14) == 0) {
         const char* channel = strstr(line, "channel=");
+        unsigned long channel_value = channel ? strtoul(channel + 8, NULL, 10) : 0UL;
+
+        app->promiscuous_watch_channel = (uint8_t)channel_value;
+        app->promiscuous_live_elapsed_ms = 0U;
+        app->promiscuous_live_total_frames = 0U;
+        app->promiscuous_live_unique_count = 0U;
+        app->promiscuous_live_beacon_count = 0U;
+        app->promiscuous_live_max_rssi = -127;
+        app->promiscuous_watch_live_active = true;
+        app->promiscuous_watch_stop_pending = false;
+        fuse_radio_app_set_promiscuous_live_text(
+            app,
+            "Ch %lu\nLive watch\n\nFrames: 0\nUnique: 0\nBeacons: 0\nRSSI: -- dBm",
+            channel_value);
+    } else if(strncmp(line, "WATCH_LIVE ", 11) == 0) {
+        const char* channel = strstr(line, "channel=");
+        const char* elapsed = strstr(line, " elapsed_ms=");
         const char* total = strstr(line, " total=");
         const char* unique = strstr(line, " unique=");
-        const char* max_rssi = strstr(line, " max_rssi=");
         const char* beacons = strstr(line, " beacons=");
+        const char* max_rssi = strstr(line, " max_rssi=");
 
-        if(channel && total && unique && max_rssi && beacons) {
+        if(channel && elapsed && total && unique && beacons && max_rssi) {
             unsigned long channel_value = strtoul(channel + 8, NULL, 10);
+            unsigned long elapsed_value = strtoul(elapsed + 12, NULL, 10);
             unsigned long total_value = strtoul(total + 7, NULL, 10);
             unsigned long unique_value = strtoul(unique + 8, NULL, 10);
-            long max_rssi_value = strtol(max_rssi + 10, NULL, 10);
             unsigned long beacon_value = strtoul(beacons + 9, NULL, 10);
-            fuse_radio_app_append_promiscuous_text(
+            long max_rssi_value = strtol(max_rssi + 10, NULL, 10);
+
+            app->promiscuous_watch_channel = (uint8_t)channel_value;
+            app->promiscuous_live_elapsed_ms = (uint32_t)elapsed_value;
+            app->promiscuous_live_total_frames = (uint32_t)total_value;
+            app->promiscuous_live_unique_count = (uint16_t)unique_value;
+            app->promiscuous_live_beacon_count = (uint16_t)beacon_value;
+            app->promiscuous_live_max_rssi = (int16_t)max_rssi_value;
+            app->promiscuous_watch_live_active = true;
+            fuse_radio_app_set_promiscuous_live_text(
                 app,
-                "CH %lu\nFrames: %lu\nUnique: %lu\nBeacons: %lu\nMax RSSI: %ld dBm\n\n",
+                "Ch %lu\n%lus elapsed\n\nFrames: %lu\nUnique: %lu\nBeacons: %lu\nRSSI: %ld dBm",
                 channel_value,
+                elapsed_value / 1000UL,
                 total_value,
                 unique_value,
                 beacon_value,
                 max_rssi_value);
-        } else {
-            fuse_radio_app_append_promiscuous_text(app, "%s\n\n", line);
+        }
+    } else if(strncmp(line, "WATCH_SUMMARY ", 14) == 0) {
+        const char* channel = strstr(line, "channel=");
+        const char* duration = strstr(line, " duration_ms=");
+        const char* total = strstr(line, " total=");
+        const char* mgmt = strstr(line, " mgmt=");
+        const char* data = strstr(line, " data=");
+        const char* ctrl = strstr(line, " ctrl=");
+        const char* misc = strstr(line, " misc=");
+        const char* beacons = strstr(line, " beacons=");
+        const char* deauth = strstr(line, " deauth=");
+        const char* unique = strstr(line, " unique=");
+        const char* max_rssi = strstr(line, " max_rssi=");
+
+        if(channel && duration && total && mgmt && data && ctrl && misc && beacons && deauth &&
+           unique && max_rssi) {
+            fuse_radio_app_reset_promiscuous_results(app);
+            app->watch_summary.channel = (uint8_t)strtoul(channel + 8, NULL, 10);
+            app->watch_summary.duration_ms = (uint32_t)strtoul(duration + 13, NULL, 10);
+            app->watch_summary.total_frames = (uint32_t)strtoul(total + 7, NULL, 10);
+            app->watch_summary.management_frames = (uint32_t)strtoul(mgmt + 6, NULL, 10);
+            app->watch_summary.data_frames = (uint32_t)strtoul(data + 6, NULL, 10);
+            app->watch_summary.control_frames = (uint32_t)strtoul(ctrl + 6, NULL, 10);
+            app->watch_summary.misc_frames = (uint32_t)strtoul(misc + 6, NULL, 10);
+            app->watch_summary.beacon_frames = (uint16_t)strtoul(beacons + 9, NULL, 10);
+            app->watch_summary.deauth_frames = (uint16_t)strtoul(deauth + 8, NULL, 10);
+            app->watch_summary.unique_count = (uint16_t)strtoul(unique + 8, NULL, 10);
+            app->watch_summary.max_rssi = (int16_t)strtol(max_rssi + 10, NULL, 10);
+            app->watch_summary.has_summary = true;
+            fuse_radio_app_append_promiscuous_text(
+                app,
+                "Watch complete\nChannel: %lu\nDuration: %lus\nFrames: %lu\nMgmt: %lu\nData: %lu\nCtrl: %lu\nMisc: %lu\nBeacons: %lu\nDeauth: %lu\nUnique: %lu\nMax RSSI: %ld dBm\n\nDevices\n",
+                strtoul(channel + 8, NULL, 10),
+                strtoul(duration + 13, NULL, 10) / 1000UL,
+                strtoul(total + 7, NULL, 10),
+                strtoul(mgmt + 6, NULL, 10),
+                strtoul(data + 6, NULL, 10),
+                strtoul(ctrl + 6, NULL, 10),
+                strtoul(misc + 6, NULL, 10),
+                strtoul(beacons + 9, NULL, 10),
+                strtoul(deauth + 8, NULL, 10),
+                strtoul(unique + 8, NULL, 10),
+                strtol(max_rssi + 10, NULL, 10));
+        }
+    } else if(strncmp(line, "WATCH_DEVICE ", 13) == 0) {
+        const char* mac = strstr(line, "mac=");
+        const char* frames = strstr(line, " frames=");
+        const char* beacons = strstr(line, " beacons=");
+        const char* max_rssi = strstr(line, " max_rssi=");
+
+        if(mac && frames) {
+            char address[18] = {0};
+            size_t address_length = (size_t)(frames - (mac + 4));
+
+            if(address_length >= sizeof(address)) {
+                address_length = sizeof(address) - 1U;
+            }
+
+            memcpy(address, mac + 4, address_length);
+            address[address_length] = '\0';
+
+            if(app->watch_device_count < FUSE_RADIO_MAX_WATCH_DEVICES) {
+                FuseRadioWatchDevice* device = &app->watch_devices[app->watch_device_count++];
+                strncpy(device->mac, address, sizeof(device->mac) - 1U);
+                device->mac[sizeof(device->mac) - 1U] = '\0';
+                device->frames = (uint32_t)strtoul(frames + 8, NULL, 10);
+                device->beacons =
+                    beacons ? (uint16_t)strtoul(beacons + 9, NULL, 10) : 0U;
+                device->max_rssi =
+                    max_rssi ? (int16_t)strtol(max_rssi + 10, NULL, 10) : -127;
+            }
+
+            fuse_radio_app_update_watch_device_roles(app);
+
+            fuse_radio_app_append_promiscuous_text(
+                app,
+                "%s  %lu  b%u\n",
+                address,
+                strtoul(frames + 8, NULL, 10),
+                beacons ? strtoul(beacons + 9, NULL, 10) : 0UL);
         }
     } else if(strncmp(line, "WATCH_DONE ", 11) == 0) {
         const char* channel = strstr(line, "channel=");
         unsigned long channel_value = channel ? strtoul(channel + 8, NULL, 10) : 0UL;
-        fuse_radio_app_append_promiscuous_text(
-            app, "Watch complete\nChannel: %lu\n", channel_value);
+        if(app->promiscuous_info_text[0] == '\0') {
+            fuse_radio_app_append_promiscuous_text(
+                app, "Watch complete\nChannel: %lu\n", channel_value);
+        }
+        app->promiscuous_watch_live_active = false;
+        app->promiscuous_watch_stop_pending = false;
         app->current_request = FuseRadioRequestNone;
         fuse_radio_app_set_wifi_mode_action(
             app,
@@ -1386,70 +1855,7 @@ void fuse_radio_app_process_rx(FuseRadioApp* app) {
 bool fuse_radio_app_start_session(FuseRadioApp* app) {
     furi_assert(app);
 
-    fuse_radio_app_reset_scan_results(app);
-    fuse_radio_app_reset_discover_results(app);
-    fuse_radio_app_reset_mdns_results(app);
-    fuse_radio_app_reset_promiscuous_results(app);
-    fuse_radio_app_reset_wifi_status(app);
-    app->current_request = FuseRadioRequestNone;
-    app->text_input_mode = FuseRadioTextInputNone;
-    app->promiscuous_preset = FuseRadioPromiscuousPresetNone;
-    app->connect_flow_active = false;
-    app->line_length = 0U;
-    app->line_overflow = false;
-    app->module_detect_event_sent = false;
-    app->last_error[0] = '\0';
-    app->module_state = FuseRadioModuleStatePowering;
-    fuse_radio_app_set_status(app, "Powering ESP module from OTG.");
-
-    if(!app->expansion) {
-        app->expansion = furi_record_open(RECORD_EXPANSION);
-    }
-
-    if(app->expansion && !app->expansion_disabled) {
-        expansion_disable(app->expansion);
-        app->expansion_disabled = true;
-    }
-
-    if(!app->otg_enabled) {
-        if(!fuse_radio_app_enable_otg(app)) {
-            return false;
-        }
-    }
-
-    if(app->otg_enabled) {
-        fuse_radio_app_set_status(app, "OTG 5V enabled. Waiting for module.");
-    } else {
-        fuse_radio_app_set_status(app, "USB 5V detected. Waiting for module.");
-    }
-
-    if(!app->insomnia_active) {
-        furi_hal_power_insomnia_enter();
-        app->insomnia_active = true;
-    }
-
-    app->serial_handle = furi_hal_serial_control_acquire(FuriHalSerialIdUsart);
-    if(!app->serial_handle) {
-        fuse_radio_app_set_error(app, "Cannot acquire USART");
-        return false;
-    }
-
-    furi_hal_serial_init(app->serial_handle, FUSE_RADIO_UART_BAUD_RATE);
-    furi_hal_serial_configure_framing(
-        app->serial_handle,
-        FuriHalSerialDataBits8,
-        FuriHalSerialParityNone,
-        FuriHalSerialStopBits1);
-    furi_hal_serial_async_rx_start(
-        app->serial_handle, fuse_radio_app_serial_rx_callback, app, false);
-    app->rx_started = true;
-
-    app->detect_started_at = furi_get_tick();
-    app->last_ping_at = 0U;
-    app->module_state = FuseRadioModuleStateWaitingReady;
-    fuse_radio_app_set_status(app, "Waiting for READY or PONG.");
-
-    return true;
+    return fuse_radio_app_bootstrap_session(app, true);
 }
 
 void fuse_radio_app_stop_session(FuseRadioApp* app) {
@@ -1494,7 +1900,7 @@ void fuse_radio_app_stop_session(FuseRadioApp* app) {
 void fuse_radio_app_retry_session(FuseRadioApp* app) {
     furi_assert(app);
     fuse_radio_app_stop_session(app);
-    fuse_radio_app_start_session(app);
+    fuse_radio_app_bootstrap_session(app, true);
 }
 
 bool fuse_radio_app_start_wifi_scan(FuseRadioApp* app) {
@@ -1586,15 +1992,19 @@ void fuse_radio_app_refresh_wifi_info_widget(FuseRadioApp* app) {
 void fuse_radio_app_refresh_discover_widget(FuseRadioApp* app) {
     furi_assert(app);
 
+    const bool discover_active = app->current_request == FuseRadioRequestDiscover;
+
     widget_reset(app->widget);
     widget_add_string_element(app->widget, 64, 5, AlignCenter, AlignTop, FontPrimary, "Discover");
     widget_add_text_scroll_element(app->widget, 0, 15, 128, 38, app->discover_info_text);
-    widget_add_button_element(
-        app->widget,
-        GuiButtonTypeCenter,
-        "Probe",
-        fuse_radio_app_wifi_discover_button_callback,
-        app);
+    if(!discover_active) {
+        widget_add_button_element(
+            app->widget,
+            GuiButtonTypeCenter,
+            "Probe",
+            fuse_radio_app_wifi_discover_button_callback,
+            app);
+    }
 
     app->discover_dirty = false;
 }
@@ -1614,29 +2024,134 @@ void fuse_radio_app_refresh_mdns_widget(FuseRadioApp* app) {
 void fuse_radio_app_refresh_promiscuous_widget(FuseRadioApp* app) {
     furi_assert(app);
 
-    widget_reset(app->widget);
-    widget_add_string_element(app->widget, 64, 5, AlignCenter, AlignTop, FontPrimary, "Promisc");
-    widget_add_text_scroll_element(app->widget, 0, 15, 128, 38, app->promiscuous_info_text);
-    widget_add_button_element(
-        app->widget,
-        GuiButtonTypeLeft,
-        "Menu",
-        fuse_radio_app_wifi_promiscuous_button_callback,
-        app);
-    widget_add_button_element(
-        app->widget,
-        GuiButtonTypeCenter,
-        "Repeat",
-        fuse_radio_app_wifi_promiscuous_button_callback,
-        app);
+    const bool survey_active = app->current_request == FuseRadioRequestPromiscuousSurvey;
+
+    if(app->promiscuous_watch_live_active) {
+        fuse_radio_app_refresh_promiscuous_live_view(app);
+    } else if(app->watch_summary.has_summary && app->watch_device_count > 0U) {
+        fuse_radio_app_refresh_watch_result_view(app);
+    } else {
+        widget_reset(app->widget);
+        widget_add_string_element(
+            app->widget, 64, 5, AlignCenter, AlignTop, FontPrimary, "Promisc");
+        widget_add_text_scroll_element(app->widget, 0, 15, 128, 38, app->promiscuous_info_text);
+        widget_add_button_element(
+            app->widget,
+            GuiButtonTypeLeft,
+            "Menu",
+            fuse_radio_app_wifi_promiscuous_button_callback,
+            app);
+        if(!survey_active) {
+            widget_add_button_element(
+                app->widget,
+                GuiButtonTypeCenter,
+                "Repeat",
+                fuse_radio_app_wifi_promiscuous_button_callback,
+                app);
+        }
+    }
 
     app->promiscuous_dirty = false;
 }
 
 void fuse_radio_app_refresh_scan_view(FuseRadioApp* app) {
     furi_assert(app);
+
     fuse_radio_scan_view_set_data(app->scan_view, &app->scan_results, app->wifi_state);
     app->scan_dirty = false;
+}
+
+static bool fuse_radio_app_scene_requires_connected(uint32_t scene) {
+    return scene == FuseRadioSceneWifiConnectedMenu ||
+           scene == FuseRadioSceneWifiDiscoverResult ||
+           scene == FuseRadioSceneWifiMdnsHost ||
+           scene == FuseRadioSceneWifiMdnsResult;
+}
+
+static bool fuse_radio_app_scene_requires_promiscuous(uint32_t scene) {
+    return scene == FuseRadioSceneWifiPromiscuousMenu ||
+            scene == FuseRadioSceneWifiPromiscuousSurveyPreset ||
+            scene == FuseRadioSceneWifiPromiscuousSurveyProgress ||
+            scene == FuseRadioSceneWifiPromiscuousSurveyResult ||
+           scene == FuseRadioSceneWifiPromiscuousWatchChannel ||
+           scene == FuseRadioSceneWifiPromiscuousResult;
+}
+
+static bool fuse_radio_app_survey_active(const FuseRadioApp* app) {
+    return app->current_request == FuseRadioRequestPromiscuousSurvey;
+}
+
+static bool fuse_radio_app_scene_mode_is_valid(FuseRadioApp* app, uint32_t scene) {
+    if(fuse_radio_app_scene_requires_connected(scene)) {
+        if(app->wifi_mode == FuseRadioWifiModeConnected) {
+            return true;
+        }
+
+        if(app->current_request == FuseRadioRequestConnect ||
+           app->current_request == FuseRadioRequestDiscover ||
+           app->current_request == FuseRadioRequestMdns ||
+           app->wifi_action == FuseRadioWifiActionConnecting ||
+           app->wifi_action == FuseRadioWifiActionDiscovering ||
+           app->wifi_action == FuseRadioWifiActionResolvingMdns) {
+            return true;
+        }
+
+        return false;
+    }
+
+    if(fuse_radio_app_scene_requires_promiscuous(scene)) {
+        if(app->wifi_mode == FuseRadioWifiModePromiscuous) {
+            return true;
+        }
+
+        if(app->current_request == FuseRadioRequestPromiscuousEnter ||
+           app->current_request == FuseRadioRequestPromiscuousSurvey ||
+           app->current_request == FuseRadioRequestPromiscuousWatch ||
+           app->wifi_action == FuseRadioWifiActionEnteringPromiscuous ||
+           app->wifi_action == FuseRadioWifiActionSurveying ||
+           app->wifi_action == FuseRadioWifiActionWatching) {
+            return true;
+        }
+
+        return false;
+    }
+
+    return true;
+}
+
+static void fuse_radio_app_handle_scene_mode_guard(FuseRadioApp* app, uint32_t scene) {
+    const uint32_t now = furi_get_tick();
+
+    if(app->module_state != FuseRadioModuleStateDetected) {
+        return;
+    }
+
+    if(!fuse_radio_app_scene_requires_connected(scene) &&
+       !fuse_radio_app_scene_requires_promiscuous(scene)) {
+        return;
+    }
+
+    if(app->current_request == FuseRadioRequestNone &&
+       (now - app->last_mode_guard_poll_at) >= FUSE_RADIO_MODE_GUARD_POLL_MS) {
+        if(fuse_radio_app_send_line(app, "WIFI STATUS\n")) {
+            app->last_mode_guard_poll_at = now;
+            app->current_request = FuseRadioRequestStatus;
+        }
+    }
+
+    if(!fuse_radio_app_scene_mode_is_valid(app, scene)) {
+        app->connect_flow_active = false;
+        app->promiscuous_preset = FuseRadioPromiscuousPresetNone;
+        scene_manager_search_and_switch_to_previous_scene(app->scene_manager, FuseRadioSceneWifiMenu);
+    }
+}
+
+static bool fuse_radio_app_discover_stream_active(const FuseRadioApp* app) {
+    return app->current_request == FuseRadioRequestDiscover;
+}
+
+static bool fuse_radio_app_promiscuous_stream_active(const FuseRadioApp* app) {
+    return app->current_request == FuseRadioRequestPromiscuousSurvey;
 }
 
 void fuse_radio_app_handle_tick(FuseRadioApp* app) {
@@ -1644,17 +2159,54 @@ void fuse_radio_app_handle_tick(FuseRadioApp* app) {
 
     fuse_radio_app_process_rx(app);
 
+    if(app->module_state == FuseRadioModuleStatePowering) {
+        const uint32_t now = furi_get_tick();
+
+        if(now >= app->next_startup_action_at) {
+            fuse_radio_app_bootstrap_session(app, false);
+        }
+    }
+
     if(app->module_state == FuseRadioModuleStateWaitingReady) {
         const uint32_t now = furi_get_tick();
 
         if((now - app->detect_started_at) >= FUSE_RADIO_DETECT_TIMEOUT_MS) {
-            fuse_radio_app_set_error(app, "No UART response\nfrom the ESP board");
+            if(app->startup_link_retry_count < FUSE_RADIO_STARTUP_MAX_LINK_RETRIES) {
+                app->startup_link_retry_count++;
+                fuse_radio_app_stop_session(app);
+                fuse_radio_app_bootstrap_session(app, false);
+                {
+                    char detail[64];
+
+                    snprintf(
+                        detail,
+                        sizeof(detail),
+                        "No reply. Restarting link %u/%u.",
+                        (unsigned)app->startup_link_retry_count,
+                        (unsigned)FUSE_RADIO_STARTUP_MAX_LINK_RETRIES);
+                    fuse_radio_app_set_status(app, detail);
+                }
+            } else {
+                fuse_radio_app_set_error(app, "No UART response\nfrom the ESP board");
+            }
         } else if(
-            (app->last_ping_at == 0U) ||
-            ((now - app->last_ping_at) >= FUSE_RADIO_PING_INTERVAL_MS)) {
+            now >= app->next_startup_action_at &&
+            (app->last_ping_at == 0U ||
+             ((now - app->last_ping_at) >= FUSE_RADIO_PING_INTERVAL_MS))) {
             if(fuse_radio_app_send_ping(app)) {
                 app->last_ping_at = now;
-                fuse_radio_app_set_status(app, "Sent PING. Waiting for PONG.");
+                if(app->startup_link_retry_count == 0U) {
+                    fuse_radio_app_set_status(app, "Sent PING. Waiting for PONG.");
+                } else {
+                    char detail[64];
+                    snprintf(
+                        detail,
+                        sizeof(detail),
+                        "Retry %u/%u: sent PING.",
+                        (unsigned)app->startup_link_retry_count,
+                        (unsigned)FUSE_RADIO_STARTUP_MAX_LINK_RETRIES);
+                    fuse_radio_app_set_status(app, detail);
+                }
             }
         }
     }
@@ -1666,6 +2218,8 @@ void fuse_radio_app_handle_tick(FuseRadioApp* app) {
     }
 
     const uint32_t scene = scene_manager_get_current_scene(app->scene_manager);
+    fuse_radio_app_handle_scene_mode_guard(app, scene);
+
     if(app->status_dirty && scene == FuseRadioSceneStatus) {
         fuse_radio_app_refresh_status_widget(app);
     }
@@ -1680,14 +2234,35 @@ void fuse_radio_app_handle_tick(FuseRadioApp* app) {
     if(app->wifi_info_dirty && scene == FuseRadioSceneWifiStatus) {
         fuse_radio_app_refresh_wifi_info_widget(app);
     }
-    if(app->discover_dirty && scene == FuseRadioSceneWifiDiscoverResult) {
+    if(app->discover_dirty && scene == FuseRadioSceneWifiDiscoverResult &&
+       !fuse_radio_app_discover_stream_active(app)) {
         fuse_radio_app_refresh_discover_widget(app);
     }
     if(app->mdns_dirty && scene == FuseRadioSceneWifiMdnsResult) {
         fuse_radio_app_refresh_mdns_widget(app);
     }
-    if(app->promiscuous_dirty && scene == FuseRadioSceneWifiPromiscuousResult) {
+    if(scene == FuseRadioSceneWifiPromiscuousSurveyProgress) {
+        if(app->promiscuous_dirty) {
+            fuse_radio_app_refresh_survey_progress_view(app);
+            view_dispatcher_switch_to_view(app->view_dispatcher, FuseRadioViewSurveyProgress);
+        } else if(fuse_radio_app_survey_active(app)) {
+            fuse_radio_survey_progress_view_advance_animation(app->survey_progress_view);
+        }
+    }
+    if(app->promiscuous_dirty && scene == FuseRadioSceneWifiPromiscuousSurveyResult) {
+        fuse_radio_app_refresh_survey_result_view(app);
+        view_dispatcher_switch_to_view(app->view_dispatcher, FuseRadioViewSurveyResult);
+    }
+    if(app->promiscuous_dirty && scene == FuseRadioSceneWifiPromiscuousResult &&
+       !fuse_radio_app_promiscuous_stream_active(app)) {
         fuse_radio_app_refresh_promiscuous_widget(app);
+        view_dispatcher_switch_to_view(
+            app->view_dispatcher,
+            app->promiscuous_watch_live_active ?
+                FuseRadioViewWatchLive :
+                (app->watch_summary.has_summary && app->watch_device_count > 0U ?
+                     FuseRadioViewWatchResult :
+                     FuseRadioViewWidget));
     }
 }
 
@@ -1702,12 +2277,19 @@ FuseRadioApp* fuse_radio_app_alloc(void) {
     app->submenu = submenu_alloc();
     app->scan_view = fuse_radio_scan_view_alloc();
     app->text_input = text_input_alloc();
+    app->channel_picker_view = fuse_radio_channel_picker_view_alloc();
+    app->survey_preset_view = fuse_radio_survey_preset_view_alloc();
+    app->survey_progress_view = fuse_radio_survey_progress_view_alloc();
+    app->survey_result_view = fuse_radio_survey_result_view_alloc();
+    app->watch_live_view = fuse_radio_watch_live_view_alloc();
+    app->watch_result_view = fuse_radio_watch_result_view_alloc();
     app->rx_stream = furi_stream_buffer_alloc(FUSE_RADIO_RX_STREAM_SIZE, 1U);
     app->power = furi_record_open(RECORD_POWER);
     app->storage = furi_record_open(RECORD_STORAGE);
     app->credentials_format = flipper_format_file_alloc(app->storage);
 
     fuse_radio_app_reset_wifi_status(app);
+    app->promiscuous_watch_channel = 1U;
     fuse_radio_app_set_status(app, "Preparing module session.");
     fuse_radio_app_load_credentials(app);
 
@@ -1728,8 +2310,42 @@ FuseRadioApp* fuse_radio_app_alloc(void) {
         app->view_dispatcher, FuseRadioViewScan, fuse_radio_scan_view_get_view(app->scan_view));
     view_dispatcher_add_view(
         app->view_dispatcher, FuseRadioViewTextInput, text_input_get_view(app->text_input));
+    view_dispatcher_add_view(
+        app->view_dispatcher,
+        FuseRadioViewChannelPicker,
+        fuse_radio_channel_picker_view_get_view(app->channel_picker_view));
+    view_dispatcher_add_view(
+        app->view_dispatcher,
+        FuseRadioViewSurveyPreset,
+        fuse_radio_survey_preset_view_get_view(app->survey_preset_view));
+    view_dispatcher_add_view(
+        app->view_dispatcher,
+        FuseRadioViewSurveyProgress,
+        fuse_radio_survey_progress_view_get_view(app->survey_progress_view));
+    view_dispatcher_add_view(
+        app->view_dispatcher,
+        FuseRadioViewSurveyResult,
+        fuse_radio_survey_result_view_get_view(app->survey_result_view));
+    view_dispatcher_add_view(
+        app->view_dispatcher,
+        FuseRadioViewWatchLive,
+        fuse_radio_watch_live_view_get_view(app->watch_live_view));
+    view_dispatcher_add_view(
+        app->view_dispatcher,
+        FuseRadioViewWatchResult,
+        fuse_radio_watch_result_view_get_view(app->watch_result_view));
 
     fuse_radio_scan_view_set_callback(app->scan_view, fuse_radio_app_scan_view_callback, app);
+    fuse_radio_channel_picker_view_set_callback(
+        app->channel_picker_view, fuse_radio_app_watch_channel_callback, app);
+    fuse_radio_survey_preset_view_set_callback(
+        app->survey_preset_view, fuse_radio_app_survey_preset_view_callback, app);
+    fuse_radio_survey_result_view_set_callback(
+        app->survey_result_view, fuse_radio_app_survey_result_view_callback, app);
+    fuse_radio_watch_live_view_set_callback(
+        app->watch_live_view, fuse_radio_app_watch_live_view_callback, app);
+    fuse_radio_watch_result_view_set_callback(
+        app->watch_result_view, fuse_radio_app_watch_result_view_callback, app);
 
     fuse_radio_app_start_session(app);
     scene_manager_next_scene(app->scene_manager, FuseRadioSceneStatus);
@@ -1752,6 +2368,24 @@ void fuse_radio_app_free(FuseRadioApp* app) {
 
     view_dispatcher_remove_view(app->view_dispatcher, FuseRadioViewTextInput);
     text_input_free(app->text_input);
+
+    view_dispatcher_remove_view(app->view_dispatcher, FuseRadioViewChannelPicker);
+    fuse_radio_channel_picker_view_free(app->channel_picker_view);
+
+    view_dispatcher_remove_view(app->view_dispatcher, FuseRadioViewSurveyPreset);
+    fuse_radio_survey_preset_view_free(app->survey_preset_view);
+
+    view_dispatcher_remove_view(app->view_dispatcher, FuseRadioViewSurveyProgress);
+    fuse_radio_survey_progress_view_free(app->survey_progress_view);
+
+    view_dispatcher_remove_view(app->view_dispatcher, FuseRadioViewSurveyResult);
+    fuse_radio_survey_result_view_free(app->survey_result_view);
+
+    view_dispatcher_remove_view(app->view_dispatcher, FuseRadioViewWatchLive);
+    fuse_radio_watch_live_view_free(app->watch_live_view);
+
+    view_dispatcher_remove_view(app->view_dispatcher, FuseRadioViewWatchResult);
+    fuse_radio_watch_result_view_free(app->watch_result_view);
 
     view_dispatcher_remove_view(app->view_dispatcher, FuseRadioViewSubmenu);
     submenu_free(app->submenu);

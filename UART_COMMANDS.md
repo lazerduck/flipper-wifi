@@ -50,7 +50,7 @@ ERR UNKNOWN_COMMAND
 | `WIFI DISCONNECT` | Implemented | Disconnect from current AP |
 | `WIFI DISCOVER` | Implemented | Probe the current IPv4 subnet for reachable hosts |
 | `WIFI READ_MDNS host=<hostname>` | Implemented | Resolve an mDNS hostname on the connected network |
-| `WIFI PROMISCUOUS <ENTER|EXIT|SURVEY|WATCH>` | Implemented | Enter passive capture mode and run RF observation commands |
+| `WIFI PROMISCUOUS <ENTER|EXIT|SURVEY|WATCH|WATCH_STOP>` | Implemented | Enter passive capture mode and run RF observation commands |
 | `SEND <payload>` | Stub | Reserved, not implemented |
 | `QUERY <request>` | Stub | Reserved, not implemented |
 
@@ -252,7 +252,7 @@ WIFI STATUS
 WIFI STATUS mode=CONNECTED action=NONE state=CONNECTED connected=yes ssid=OfficeWiFi reason=0
 ```
 
-### `WIFI PROMISCUOUS <ENTER|EXIT|SURVEY|WATCH>`
+### `WIFI PROMISCUOUS <ENTER|EXIT|SURVEY|WATCH|WATCH_STOP>`
 
 Promiscuous-mode commands live under a dedicated `WIFI` subtree.
 
@@ -340,14 +340,21 @@ SURVEY channel=11 total=24 mgmt=11 data=8 ctrl=5 misc=0 beacons=3 deauth=0 uniqu
 SURVEY_DONE channels=3 dwell_ms=200 duration_ms=600 recommended=11
 ```
 
-#### `WIFI PROMISCUOUS WATCH channel=<n> [duration_ms=<ms>] [rssi_min=<dbm>]`
+#### `WIFI PROMISCUOUS WATCH channel=<n> [interval_ms=<ms>] [rssi_min=<dbm>]`
 
-Runs a blocking fixed-channel observation window while promiscuous mode is active.
+Starts a continuous fixed-channel observation stream while promiscuous mode is active.
 
 Successful response format:
 
 ```text
-WATCH channel=<n> total=<frames> mgmt=<count> data=<count> ctrl=<count> misc=<count> beacons=<count> deauth=<count> unique=<count> max_rssi=<dbm> duration_ms=<ms>
+WATCH_STARTED channel=<n> interval_ms=<ms>
+WATCH_LIVE channel=<n> elapsed_ms=<ms> total=<frames> mgmt=<count> data=<count> ctrl=<count> misc=<count> beacons=<count> deauth=<count> unique=<count> max_rssi=<dbm>
+WATCH_LIVE channel=<n> elapsed_ms=<ms> total=<frames> mgmt=<count> data=<count> ctrl=<count> misc=<count> beacons=<count> deauth=<count> unique=<count> max_rssi=<dbm>
+...
+WATCH_SUMMARY channel=<n> duration_ms=<ms> total=<frames> mgmt=<count> data=<count> ctrl=<count> misc=<count> beacons=<count> deauth=<count> unique=<count> max_rssi=<dbm>
+WATCH_DEVICE mac=<aa:bb:cc:dd:ee:ff> frames=<count> beacons=<count> max_rssi=<dbm>
+WATCH_DEVICE mac=<aa:bb:cc:dd:ee:ff> frames=<count> beacons=<count> max_rssi=<dbm>
+...
 WATCH_DONE channel=<n> duration_ms=<ms>
 ```
 
@@ -357,27 +364,53 @@ Possible failures:
 ERR WIFI_NOT_PROMISCUOUS
 ERR WIFI_PROMISCUOUS_BUSY
 ERR WIFI_WATCH_FAILED
-ERR USAGE WIFI PROMISCUOUS WATCH channel=<n> [duration_ms=<ms>] [rssi_min=<dbm>]
+ERR USAGE WIFI PROMISCUOUS WATCH channel=<n> [interval_ms=<ms>] [rssi_min=<dbm>]
 ```
 
 Notes:
 
 - `channel` is required.
-- `duration_ms` defaults to `5000`.
+- `interval_ms` defaults to `1000` and controls how often `WATCH_LIVE` summaries are emitted.
 - `rssi_min` defaults to `-95`.
+- The watch continues until `WIFI PROMISCUOUS WATCH_STOP` is received or promiscuous mode is exited.
+
+#### `WIFI PROMISCUOUS WATCH_STOP`
+
+Stops the active continuous watch stream and emits the final summary payload.
+
+Successful response format:
+
+```text
+WATCH_SUMMARY channel=<n> duration_ms=<ms> total=<frames> mgmt=<count> data=<count> ctrl=<count> misc=<count> beacons=<count> deauth=<count> unique=<count> max_rssi=<dbm>
+WATCH_DEVICE mac=<aa:bb:cc:dd:ee:ff> frames=<count> beacons=<count> max_rssi=<dbm>
+...
+WATCH_DONE channel=<n> duration_ms=<ms>
+```
 
 Example:
 
 ```text
-WIFI PROMISC WATCH channel=6 duration_ms=3000
-WATCH channel=6 total=421 mgmt=142 data=188 ctrl=79 misc=12 beacons=29 deauth=0 unique=34 max_rssi=-44 duration_ms=3000
-WATCH_DONE channel=6 duration_ms=3000
+WIFI PROMISC WATCH channel=6 interval_ms=1000
+WATCH_STARTED channel=6 interval_ms=1000
+WATCH_LIVE channel=6 elapsed_ms=1000 total=127 mgmt=41 data=56 ctrl=26 misc=4 beacons=9 deauth=0 unique=14 max_rssi=-47
+WATCH_LIVE channel=6 elapsed_ms=2000 total=268 mgmt=83 data=119 ctrl=58 misc=8 beacons=18 deauth=0 unique=26 max_rssi=-44
+WIFI PROMISC WATCH_STOP
+WATCH_SUMMARY channel=6 duration_ms=2310 total=299 mgmt=94 data=132 ctrl=63 misc=10 beacons=20 deauth=0 unique=31 max_rssi=-44
+WATCH_DEVICE mac=AA:BB:CC:DD:EE:FF frames=49 beacons=17 max_rssi=-44
+WATCH_DEVICE mac=11:22:33:44:55:66 frames=28 beacons=0 max_rssi=-58
+WATCH_DONE channel=6 duration_ms=2310
 ```
+
+Notes:
+
+- `beacons` is the count of beacon management frames seen from that transmitter during the watch.
+- `max_rssi` is the strongest RSSI observed for that transmitter during the watch.
+- The app can use beacon-heavy devices as a cautious `Likely AP` heuristic, with frame count as a fallback tie-breaker.
 
 Usage for the subtree root:
 
 ```text
-ERR USAGE WIFI PROMISCUOUS <ENTER|EXIT|SURVEY|WATCH>
+ERR USAGE WIFI PROMISCUOUS <ENTER|EXIT|SURVEY|WATCH|WATCH_STOP>
 ```
 
 ### `WIFI DISCONNECT`

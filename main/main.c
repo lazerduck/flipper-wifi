@@ -12,6 +12,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "modules/status_led/status_led.h"
 #include "modules/wifi/wifi_manager.h"
@@ -65,13 +66,23 @@ static esp_err_t command_uart_init(void)
 		UART_PIN_NO_CHANGE);
 }
 
+static SemaphoreHandle_t s_command_uart_tx_mutex = NULL;
+
 static void command_uart_write(const char *response)
 {
 	if (response == NULL) {
 		return;
 	}
 
+	if (s_command_uart_tx_mutex != NULL) {
+		xSemaphoreTake(s_command_uart_tx_mutex, portMAX_DELAY);
+	}
+
 	uart_write_bytes(COMMAND_UART_NUM, response, strlen(response));
+
+	if (s_command_uart_tx_mutex != NULL) {
+		xSemaphoreGive(s_command_uart_tx_mutex);
+	}
 }
 
 static void process_command_buffer(char *command_buffer)
@@ -79,9 +90,22 @@ static void process_command_buffer(char *command_buffer)
 	command_context_t command_context = {
 		.write_response = command_uart_write,
 	};
+	size_t index = 0U;
 
 	if (command_buffer[0] == '\0') {
 		return;
+	}
+
+	if (command_buffer[0] < 'A' || command_buffer[0] > 'Z') {
+		return;
+	}
+
+	while (command_buffer[index] != '\0') {
+		const char current = command_buffer[index++];
+
+		if (current < 0x20 || current > 0x7e) {
+			return;
+		}
 	}
 
 	command_router_dispatch(command_buffer, &command_context);
@@ -115,6 +139,7 @@ void app_main(void)
 	}
 
 	ESP_ERROR_CHECK(command_uart_init());
+	s_command_uart_tx_mutex = xSemaphoreCreateMutex();
 	ESP_ERROR_CHECK(wifi_manager_init());
 
 	command_uart_write("READY\n");

@@ -15,8 +15,10 @@
 #define WIFI_PROMISCUOUS_SUBCOMMAND_MAX_LENGTH 32
 
 typedef struct {
-    const command_context_t *command_context;
+    command_response_writer_t write_response;
 } wifi_promiscuous_writer_context_t;
+
+static wifi_promiscuous_writer_context_t s_watch_writer_context;
 
 typedef enum {
     WIFI_READ_ARG_NOT_FOUND = 0,
@@ -244,11 +246,11 @@ static void write_result_line(const char *line, void *context)
     const wifi_promiscuous_writer_context_t *writer_context =
         (const wifi_promiscuous_writer_context_t *)context;
 
-    if (writer_context == NULL) {
+    if (writer_context == NULL || writer_context->write_response == NULL) {
         return;
     }
 
-    command_context_write_line(writer_context->command_context, line);
+    writer_context->write_response(line);
 }
 
 static void write_operation_error(const command_context_t *context, const char *prefix, esp_err_t err)
@@ -265,11 +267,15 @@ static void write_operation_error(const command_context_t *context, const char *
         } else if (strcmp(prefix, "WATCH") == 0) {
             command_context_write_line(
                 context,
-                "ERR USAGE WIFI PROMISCUOUS WATCH channel=<n> [duration_ms=<ms>] [rssi_min=<dbm>]\n");
+                "ERR USAGE WIFI PROMISCUOUS WATCH channel=<n> [interval_ms=<ms>] [rssi_min=<dbm>]\n");
         } else if (strcmp(prefix, "ENTER") == 0) {
             command_context_write_line(
                 context,
                 "ERR USAGE WIFI PROMISCUOUS ENTER [channel=<n>]\n");
+        } else if (strcmp(prefix, "WATCH_STOP") == 0) {
+            command_context_write_line(
+                context,
+                "ERR USAGE WIFI PROMISCUOUS WATCH_STOP\n");
         }
         return;
     }
@@ -302,7 +308,7 @@ static void write_usage(const command_context_t *context)
 {
     command_context_write_line(
         context,
-        "ERR USAGE WIFI PROMISCUOUS <ENTER|EXIT|SURVEY|WATCH>\n");
+    "ERR USAGE WIFI PROMISCUOUS <ENTER|EXIT|SURVEY|WATCH|WATCH_STOP>\n");
 }
 
 bool wifi_promiscuous_command_try_handle(const char *args, const command_context_t *context)
@@ -385,6 +391,12 @@ bool wifi_promiscuous_command_try_handle(const char *args, const command_context
             return true;
         }
 
+        err = wifi_promiscuous_watch_stop();
+        if (err != ESP_OK) {
+            write_operation_error(context, "WATCH", err);
+            return true;
+        }
+
         err = wifi_manager_exit_promiscuous();
         if (err != ESP_OK) {
             write_operation_error(context, "EXIT", err);
@@ -402,7 +414,7 @@ bool wifi_promiscuous_command_try_handle(const char *args, const command_context
             .rssi_min = -95,
         };
         wifi_promiscuous_writer_context_t writer_context = {
-            .command_context = context,
+            .write_response = context->write_response,
         };
         char channels_string[WIFI_PROMISCUOUS_CHANNEL_LIST_MAX_LENGTH];
         char dwell_string[16];
@@ -464,22 +476,19 @@ bool wifi_promiscuous_command_try_handle(const char *args, const command_context
 
     if (strcmp(subcommand_name, "WATCH") == 0) {
         wifi_promiscuous_watch_config_t config = {
-            .duration_ms = 5000U,
+            .report_interval_ms = WIFI_PROMISCUOUS_WATCH_REPORT_INTERVAL_MS,
             .rssi_min = -95,
         };
-        wifi_promiscuous_writer_context_t writer_context = {
-            .command_context = context,
-        };
         char channel_string[8];
-        char duration_string[16];
+        char interval_string[16];
         char rssi_string[16];
         uint32_t channel;
         wifi_read_arg_result_t channel_result;
-        wifi_read_arg_result_t duration_result;
+        wifi_read_arg_result_t interval_result;
         wifi_read_arg_result_t rssi_result;
 
         memset(channel_string, 0, sizeof(channel_string));
-        memset(duration_string, 0, sizeof(duration_string));
+        memset(interval_string, 0, sizeof(interval_string));
         memset(rssi_string, 0, sizeof(rssi_string));
 
         if (status.mode != WIFI_MANAGER_MODE_PROMISCUOUS) {
@@ -496,9 +505,9 @@ bool wifi_promiscuous_command_try_handle(const char *args, const command_context
 
         config.channel = (uint8_t)channel;
 
-        duration_result = read_named_arg(subcommand_args, "duration_ms", duration_string, sizeof(duration_string));
-        if (duration_result == WIFI_READ_ARG_INVALID ||
-            (duration_result == WIFI_READ_ARG_FOUND && !parse_u32(duration_string, &config.duration_ms))) {
+        interval_result = read_named_arg(subcommand_args, "interval_ms", interval_string, sizeof(interval_string));
+        if (interval_result == WIFI_READ_ARG_INVALID ||
+            (interval_result == WIFI_READ_ARG_FOUND && !parse_u32(interval_string, &config.report_interval_ms))) {
             write_operation_error(context, "WATCH", ESP_ERR_INVALID_ARG);
             return true;
         }
@@ -516,8 +525,25 @@ bool wifi_promiscuous_command_try_handle(const char *args, const command_context
             return true;
         }
 
-        err = wifi_promiscuous_watch(&config, write_result_line, &writer_context);
-        wifi_manager_clear_action();
+        s_watch_writer_context.write_response = context->write_response;
+
+        err = wifi_promiscuous_watch_start(&config, write_result_line, &s_watch_writer_context);
+        if (err != ESP_OK) {
+            wifi_manager_clear_action();
+            write_operation_error(context, "WATCH", err);
+            return true;
+        }
+
+        return true;
+    }
+
+    if (strcmp(subcommand_name, "WATCH_STOP") == 0) {
+        if (subcommand_args[0] != '\0') {
+            write_operation_error(context, "WATCH_STOP", ESP_ERR_INVALID_ARG);
+            return true;
+        }
+
+        err = wifi_promiscuous_watch_stop();
         if (err != ESP_OK) {
             write_operation_error(context, "WATCH", err);
             return true;

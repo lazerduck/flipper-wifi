@@ -1,11 +1,8 @@
 #include "../fuse_radio_app_i.h"
 
 enum FuseRadioWifiPromiscuousMenuIndex {
-    FuseRadioWifiPromiscuousMenuIndexSurveyQuick,
-    FuseRadioWifiPromiscuousMenuIndexSurveyFull,
-    FuseRadioWifiPromiscuousMenuIndexWatchCh1,
-    FuseRadioWifiPromiscuousMenuIndexWatchCh6,
-    FuseRadioWifiPromiscuousMenuIndexWatchCh11,
+    FuseRadioWifiPromiscuousMenuIndexSurvey,
+    FuseRadioWifiPromiscuousMenuIndexWatchChannel,
 };
 
 static void fuse_radio_scene_wifi_promiscuous_menu_callback(void* context, uint32_t index) {
@@ -24,32 +21,14 @@ void fuse_radio_scene_wifi_promiscuous_menu_on_enter(void* context) {
 
     submenu_add_item(
         app->submenu,
-        "Survey 1/6/11",
-        FuseRadioWifiPromiscuousMenuIndexSurveyQuick,
+        "Survey",
+        FuseRadioWifiPromiscuousMenuIndexSurvey,
         fuse_radio_scene_wifi_promiscuous_menu_callback,
         app);
     submenu_add_item(
         app->submenu,
-        "Survey 1-11",
-        FuseRadioWifiPromiscuousMenuIndexSurveyFull,
-        fuse_radio_scene_wifi_promiscuous_menu_callback,
-        app);
-    submenu_add_item(
-        app->submenu,
-        "Watch Ch 1",
-        FuseRadioWifiPromiscuousMenuIndexWatchCh1,
-        fuse_radio_scene_wifi_promiscuous_menu_callback,
-        app);
-    submenu_add_item(
-        app->submenu,
-        "Watch Ch 6",
-        FuseRadioWifiPromiscuousMenuIndexWatchCh6,
-        fuse_radio_scene_wifi_promiscuous_menu_callback,
-        app);
-    submenu_add_item(
-        app->submenu,
-        "Watch Ch 11",
-        FuseRadioWifiPromiscuousMenuIndexWatchCh11,
+        "Watch Channel",
+        FuseRadioWifiPromiscuousMenuIndexWatchChannel,
         fuse_radio_scene_wifi_promiscuous_menu_callback,
         app);
 
@@ -64,16 +43,12 @@ bool fuse_radio_scene_wifi_promiscuous_menu_on_event(void* context, SceneManager
         scene_manager_set_scene_state(
             app->scene_manager, FuseRadioSceneWifiPromiscuousMenu, event.event);
 
-        if(event.event == FuseRadioWifiPromiscuousMenuIndexSurveyQuick) {
-            fuse_radio_app_start_wifi_promiscuous_survey(app, true);
-        } else if(event.event == FuseRadioWifiPromiscuousMenuIndexSurveyFull) {
-            fuse_radio_app_start_wifi_promiscuous_survey(app, false);
-        } else if(event.event == FuseRadioWifiPromiscuousMenuIndexWatchCh1) {
-            fuse_radio_app_start_wifi_promiscuous_watch(app, 1U);
-        } else if(event.event == FuseRadioWifiPromiscuousMenuIndexWatchCh6) {
-            fuse_radio_app_start_wifi_promiscuous_watch(app, 6U);
-        } else if(event.event == FuseRadioWifiPromiscuousMenuIndexWatchCh11) {
-            fuse_radio_app_start_wifi_promiscuous_watch(app, 11U);
+        if(event.event == FuseRadioWifiPromiscuousMenuIndexSurvey) {
+            scene_manager_next_scene(app->scene_manager, FuseRadioSceneWifiPromiscuousSurveyPreset);
+            return true;
+        } else if(event.event == FuseRadioWifiPromiscuousMenuIndexWatchChannel) {
+            scene_manager_next_scene(app->scene_manager, FuseRadioSceneWifiPromiscuousWatchChannel);
+            return true;
         }
 
         scene_manager_next_scene(app->scene_manager, FuseRadioSceneWifiPromiscuousResult);
