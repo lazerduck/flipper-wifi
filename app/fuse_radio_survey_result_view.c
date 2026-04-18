@@ -26,13 +26,17 @@ static uint8_t fuse_radio_survey_result_signal_bars(int16_t rssi) {
     return 0U;
 }
 
-static void fuse_radio_survey_result_draw_signal(Canvas* canvas, int16_t rssi) {
+static void fuse_radio_survey_result_draw_signal_at(
+    Canvas* canvas,
+    uint8_t base_x,
+    uint8_t base_y,
+    int16_t rssi) {
     const uint8_t bars = fuse_radio_survey_result_signal_bars(rssi);
 
     for(uint8_t index = 0; index < 4U; index++) {
         const uint8_t height = 3U + index * 2U;
-        const uint8_t x = (uint8_t)(106U + index * 4U);
-        const uint8_t y = (uint8_t)(50U - height);
+        const uint8_t x = (uint8_t)(base_x + index * 4U);
+        const uint8_t y = (uint8_t)(base_y - height);
 
         if(index < bars) {
             canvas_draw_box(canvas, x, y, 2, height);
@@ -62,21 +66,20 @@ static void fuse_radio_survey_result_draw_overview(
     snprintf(best_line, sizeof(best_line), "Ch %u", (unsigned)results->recommended_channel);
     canvas_set_font(canvas, FontPrimary);
     canvas_draw_str(canvas, 33, 27, best_line);
+    canvas_set_font(canvas, FontSecondary);
+    snprintf(dwell_line, sizeof(dwell_line), "%ums dwell", (unsigned)results->dwell_ms);
+    canvas_draw_str(canvas, 76, 27, dwell_line);
 
-    canvas_draw_rframe(canvas, 4, 32, 58, 18, 2);
-    canvas_draw_rframe(canvas, 66, 32, 58, 18, 2);
+    canvas_draw_rframe(canvas, 4, 31, 58, 20, 2);
+    canvas_draw_rframe(canvas, 66, 31, 58, 20, 2);
     canvas_set_font(canvas, FontSecondary);
     canvas_draw_str(canvas, 8, 40, "Channels");
     canvas_draw_str(canvas, 70, 40, "Duration");
     canvas_set_font(canvas, FontPrimary);
     snprintf(channels_line, sizeof(channels_line), "%u", (unsigned)results->result_count);
     snprintf(duration_line, sizeof(duration_line), "%lus", (unsigned long)(results->duration_ms / 1000UL));
-    canvas_draw_str(canvas, 8, 48, channels_line);
-    canvas_draw_str(canvas, 70, 48, duration_line);
-
-    canvas_set_font(canvas, FontSecondary);
-    snprintf(dwell_line, sizeof(dwell_line), "Dwell %ums", (unsigned)results->dwell_ms);
-    canvas_draw_str(canvas, 8, 61, dwell_line);
+    canvas_draw_str(canvas, 8, 49, channels_line);
+    canvas_draw_str(canvas, 70, 49, duration_line);
 }
 
 static void fuse_radio_survey_result_draw_channel(
@@ -93,8 +96,17 @@ static void fuse_radio_survey_result_draw_channel(
     snprintf(header, sizeof(header), "CH %u", (unsigned)result->channel);
     canvas_draw_str(canvas, 8, 28, header);
     if(result->channel == results->recommended_channel) {
-        fuse_radio_survey_result_draw_badge(canvas, 99, 19, "BEST");
+        fuse_radio_survey_result_draw_badge(canvas, 40, 19, "BEST");
     }
+
+    if(result->max_rssi <= -127) {
+        snprintf(rssi, sizeof(rssi), "--");
+    } else {
+        snprintf(rssi, sizeof(rssi), "%d", result->max_rssi);
+    }
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str(canvas, 83, 28, rssi);
+    fuse_radio_survey_result_draw_signal_at(canvas, 106, 29, result->max_rssi);
 
     canvas_set_font(canvas, FontSecondary);
     snprintf(line_a, sizeof(line_a), "Frames %lu", (unsigned long)result->total_frames);
@@ -106,15 +118,6 @@ static void fuse_radio_survey_result_draw_channel(
     snprintf(line_b, sizeof(line_b), "Mgmt %lu", (unsigned long)result->management_frames);
     canvas_draw_str(canvas, 8, 50, line_a);
     canvas_draw_str(canvas, 68, 50, line_b);
-
-    canvas_set_font(canvas, FontPrimary);
-    if(result->max_rssi <= -127) {
-        snprintf(rssi, sizeof(rssi), "--");
-    } else {
-        snprintf(rssi, sizeof(rssi), "%d", result->max_rssi);
-    }
-    canvas_draw_str(canvas, 85, 61, rssi);
-    fuse_radio_survey_result_draw_signal(canvas, result->max_rssi);
 }
 
 static void fuse_radio_survey_result_view_draw_callback(Canvas* canvas, void* model) {

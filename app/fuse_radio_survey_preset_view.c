@@ -49,9 +49,9 @@ static void fuse_radio_survey_preset_view_draw_callback(Canvas* canvas, void* mo
     canvas_draw_line(canvas, 0, 15, 127, 15);
 
     canvas_set_font(canvas, FontPrimary);
-    elements_multiline_text_aligned(canvas, 64, 33, AlignCenter, AlignCenter, meta->title);
+    elements_multiline_text_aligned(canvas, 64, 31, AlignCenter, AlignCenter, meta->title);
     canvas_set_font(canvas, FontSecondary);
-    elements_multiline_text_aligned(canvas, 64, 49, AlignCenter, AlignCenter, meta->detail);
+    elements_multiline_text_aligned(canvas, 64, 47, AlignCenter, AlignCenter, meta->detail);
     elements_button_center(canvas, "Start");
 }
 
