@@ -14,6 +14,8 @@ typedef enum {
 	WIFI_MANAGER_STATE_CONNECTED,
 } wifi_manager_state_t;
 
+typedef void (*wifi_manager_state_callback_t)(wifi_manager_state_t state, void *context);
+
 typedef struct {
 	wifi_manager_state_t state;
 	bool has_ip;
@@ -27,4 +29,5 @@ esp_err_t wifi_manager_connect(const char *ssid, const char *password);
 esp_err_t wifi_manager_disconnect(void);
 esp_err_t wifi_manager_get_status(wifi_manager_status_t *status);
 esp_err_t wifi_manager_refresh_status(wifi_manager_status_t *status);
+void wifi_manager_set_state_callback(wifi_manager_state_callback_t callback, void *context);
 const char *wifi_manager_state_to_string(wifi_manager_state_t state);

@@ -13,6 +13,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "modules/status_led/status_led.h"
 #include "modules/wifi/wifi_manager.h"
 
 #define COMMAND_UART_NUM ((uart_port_t)CONFIG_FLIPPER_COMMAND_UART_PORT)
@@ -86,14 +87,32 @@ static void process_command_buffer(char *command_buffer)
 	command_router_dispatch(command_buffer, &command_context);
 }
 
+static void app_status_led_wifi_state_changed(wifi_manager_state_t state, void *context)
+{
+	(void)context;
+
+	if (!status_led_is_ready()) {
+		return;
+	}
+
+	status_led_apply_wifi_state(state);
+}
+
 void app_main(void)
 {
 	char command_buffer[COMMAND_MAX_LENGTH];
 	size_t command_length = 0;
 	app_state_t state = APP_STATE_LISTENING;
+	esp_err_t led_err;
 
 	memset(command_buffer, 0, sizeof(command_buffer));
 	esp_log_level_set("*", ESP_LOG_NONE);
+	esp_log_level_set("wifi_discovery", ESP_LOG_INFO);
+
+	led_err = status_led_init();
+	if (led_err == ESP_OK) {
+		wifi_manager_set_state_callback(app_status_led_wifi_state_changed, NULL);
+	}
 
 	ESP_ERROR_CHECK(command_uart_init());
 	ESP_ERROR_CHECK(wifi_manager_init());
