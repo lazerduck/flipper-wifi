@@ -7,7 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define FUSE_RADIO_RX_STREAM_SIZE 512U
+#define FUSE_RADIO_RX_STREAM_SIZE 1024U
 #define FUSE_RADIO_DATA_DIR APP_DATA_PATH("fuse_radio")
 #define FUSE_RADIO_CREDENTIALS_PATH APP_DATA_PATH("fuse_radio/credentials.fff")
 #define FUSE_RADIO_CREDENTIALS_FILETYPE "Fuse Radio Credentials"
@@ -187,28 +187,28 @@ typedef struct {
 static const FuseRadioSurveyPresetConfig fuse_radio_app_survey_presets[] = {
     {.preset = FuseRadioSurveyPreset11611,
      .repeat_preset = FuseRadioPromiscuousPresetSurvey11611,
-     .command = "WIFI PROMISCUOUS SURVEY channels=1,6,11 dwell_ms=200\n",
+    .command = "WIFI PROMISCUOUS SURVEY channels=1,6,11 dwell_ms=500\n",
      .channels = {1U, 6U, 11U},
      .channel_count = 3U,
-     .dwell_ms = 200U},
+    .dwell_ms = 500U},
     {.preset = FuseRadioSurveyPreset111,
      .repeat_preset = FuseRadioPromiscuousPresetSurvey111,
-     .command = "WIFI PROMISCUOUS SURVEY channels=1,2,3,4,5,6,7,8,9,10,11 dwell_ms=200\n",
+        .command = "WIFI PROMISCUOUS SURVEY dwell_ms=500\n",
      .channels = {1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U, 9U, 10U, 11U},
      .channel_count = 11U,
-     .dwell_ms = 200U},
+    .dwell_ms = 500U},
     {.preset = FuseRadioSurveyPreset14814,
      .repeat_preset = FuseRadioPromiscuousPresetSurvey14814,
-     .command = "WIFI PROMISCUOUS SURVEY channels=1,4,8,14 dwell_ms=200\n",
+    .command = "WIFI PROMISCUOUS SURVEY channels=1,4,8,14 dwell_ms=500\n",
      .channels = {1U, 4U, 8U, 14U},
      .channel_count = 4U,
-     .dwell_ms = 200U},
+    .dwell_ms = 500U},
     {.preset = FuseRadioSurveyPreset1357911,
      .repeat_preset = FuseRadioPromiscuousPresetSurvey1357911,
-     .command = "WIFI PROMISCUOUS SURVEY channels=1,3,5,7,9,11 dwell_ms=200\n",
+    .command = "WIFI PROMISCUOUS SURVEY channels=1,3,5,7,9,11 dwell_ms=500\n",
      .channels = {1U, 3U, 5U, 7U, 9U, 11U},
      .channel_count = 6U,
-     .dwell_ms = 200U},
+    .dwell_ms = 500U},
 };
 
 static const FuseRadioSurveyPresetConfig*
@@ -1452,6 +1452,7 @@ static void fuse_radio_app_handle_error_line(FuseRadioApp* app, const char* line
        app->current_request == FuseRadioRequestPromiscuousExit ||
        app->current_request == FuseRadioRequestPromiscuousSurvey ||
        app->current_request == FuseRadioRequestPromiscuousWatch) {
+        const bool survey_failed = app->current_request == FuseRadioRequestPromiscuousSurvey;
         fuse_radio_app_reset_promiscuous_results(app);
         fuse_radio_app_append_promiscuous_text(app, "%s", line);
         if(app->current_request == FuseRadioRequestPromiscuousExit) {
@@ -1461,6 +1462,10 @@ static void fuse_radio_app_handle_error_line(FuseRadioApp* app, const char* line
             fuse_radio_app_set_wifi_action(app, FuseRadioWifiActionNone, "NONE");
         }
         app->current_request = FuseRadioRequestNone;
+        if(survey_failed) {
+            view_dispatcher_send_custom_event(
+                app->view_dispatcher, FuseRadioCustomEventWifiSurveyFailed);
+        }
         return;
     }
 
@@ -1524,15 +1529,46 @@ static void fuse_radio_app_handle_line(FuseRadioApp* app, const char* line) {
         fuse_radio_app_set_wifi_action(app, FuseRadioWifiActionDisconnecting, "DISCONNECTING");
         fuse_radio_app_set_wifi_info_text(app, "Disconnecting...\nUse Refresh to confirm state.");
     } else if(strcmp(line, "WIFI PROMISCUOUS ENTERED") == 0) {
-        app->current_request = FuseRadioRequestNone;
-        fuse_radio_app_set_wifi_mode_action(
-            app,
-            FuseRadioWifiModePromiscuous,
-            "PROMISCUOUS",
-            FuseRadioWifiActionNone,
-            "NONE");
+            const bool survey_pending = app->current_request == FuseRadioRequestPromiscuousSurvey;
+            const bool watch_pending = app->current_request == FuseRadioRequestPromiscuousWatch;
+
+            if(!survey_pending && !watch_pending) {
+                app->current_request = FuseRadioRequestNone;
+            }
+
+            if(survey_pending) {
+                fuse_radio_app_set_wifi_mode_action(
+                    app,
+                    FuseRadioWifiModePromiscuous,
+                    "PROMISCUOUS",
+                    FuseRadioWifiActionSurveying,
+                    "SURVEYING");
+            } else if(watch_pending) {
+                fuse_radio_app_set_wifi_mode_action(
+                    app,
+                    FuseRadioWifiModePromiscuous,
+                    "PROMISCUOUS",
+                    FuseRadioWifiActionWatching,
+                    "WATCHING");
+            } else {
+                fuse_radio_app_set_wifi_mode_action(
+                    app,
+                    FuseRadioWifiModePromiscuous,
+                    "PROMISCUOUS",
+                    FuseRadioWifiActionNone,
+                    "NONE");
+            }
         app->wifi_connected = false;
-        fuse_radio_app_append_promiscuous_text(app, "Promiscuous mode is active.\nPick a survey or watch action.\n");
+            if(survey_pending) {
+                fuse_radio_app_append_promiscuous_text(
+                    app, "Promiscuous mode is active.\nStarting survey...\n");
+            } else if(watch_pending) {
+                fuse_radio_app_append_promiscuous_text(
+                    app, "Promiscuous mode is active.\nStarting watch...\n");
+            } else {
+                fuse_radio_app_append_promiscuous_text(
+                    app, "Promiscuous mode is active.\nPick a survey or watch action.\n");
+            }
     } else if(strcmp(line, "WIFI PROMISCUOUS EXITED") == 0) {
         app->current_request = FuseRadioRequestNone;
         fuse_radio_app_set_wifi_mode_action(

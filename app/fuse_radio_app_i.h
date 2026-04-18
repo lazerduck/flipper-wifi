@@ -106,6 +106,7 @@ typedef enum {
     FuseRadioCustomEventWifiWatchChannelStart,
     FuseRadioCustomEventWifiSurveyPresetStart,
     FuseRadioCustomEventWifiSurveyDone,
+    FuseRadioCustomEventWifiSurveyFailed,
 } FuseRadioCustomEvent;
 
 typedef enum {

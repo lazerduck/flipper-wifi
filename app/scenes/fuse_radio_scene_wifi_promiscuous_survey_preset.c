@@ -14,9 +14,13 @@ bool fuse_radio_scene_wifi_promiscuous_survey_preset_on_event(
 
     if(event.type == SceneManagerEventTypeCustom &&
        event.event == FuseRadioCustomEventWifiSurveyPresetStart) {
-        fuse_radio_app_start_wifi_promiscuous_survey(app, app->survey_results.preset);
-        scene_manager_next_scene(app->scene_manager, FuseRadioSceneWifiPromiscuousSurveyProgress);
-        return true;
+            if(fuse_radio_app_start_wifi_promiscuous_survey(app, app->survey_results.preset)) {
+                scene_manager_next_scene(
+                    app->scene_manager, FuseRadioSceneWifiPromiscuousSurveyProgress);
+                return true;
+            }
+
+            return false;
     }
 
     if(event.type == SceneManagerEventTypeBack) {

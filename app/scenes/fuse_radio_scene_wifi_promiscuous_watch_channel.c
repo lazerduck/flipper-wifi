@@ -15,9 +15,12 @@ bool fuse_radio_scene_wifi_promiscuous_watch_channel_on_event(
 
     if(event.type == SceneManagerEventTypeCustom &&
        event.event == FuseRadioCustomEventWifiWatchChannelStart) {
-        fuse_radio_app_start_wifi_promiscuous_watch(app, app->promiscuous_watch_channel);
-        scene_manager_next_scene(app->scene_manager, FuseRadioSceneWifiPromiscuousResult);
-        return true;
+            if(fuse_radio_app_start_wifi_promiscuous_watch(app, app->promiscuous_watch_channel)) {
+                scene_manager_next_scene(app->scene_manager, FuseRadioSceneWifiPromiscuousResult);
+                return true;
+            }
+
+            return false;
     }
 
     if(event.type == SceneManagerEventTypeBack) {

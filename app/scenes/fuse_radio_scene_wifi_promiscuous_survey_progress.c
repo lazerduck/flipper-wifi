@@ -16,6 +16,12 @@ bool fuse_radio_scene_wifi_promiscuous_survey_progress_on_event(
         return true;
     }
 
+    if(event.type == SceneManagerEventTypeCustom &&
+       event.event == FuseRadioCustomEventWifiSurveyFailed) {
+        scene_manager_next_scene(app->scene_manager, FuseRadioSceneWifiPromiscuousResult);
+        return true;
+    }
+
     if(event.type == SceneManagerEventTypeBack) {
         return true;
     }

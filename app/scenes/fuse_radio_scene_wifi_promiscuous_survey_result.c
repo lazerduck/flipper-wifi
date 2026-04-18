@@ -7,6 +7,7 @@ static bool fuse_radio_scene_wifi_promiscuous_survey_result_return_to_menu(FuseR
 
 void fuse_radio_scene_wifi_promiscuous_survey_result_on_enter(void* context) {
     FuseRadioApp* app = context;
+    fuse_radio_survey_result_view_set_data(app->survey_result_view, &app->survey_results);
     view_dispatcher_switch_to_view(app->view_dispatcher, FuseRadioViewSurveyResult);
 }
 

@@ -431,11 +431,6 @@ bool wifi_promiscuous_command_try_handle(const char *args, const command_context
             config.channels[index] = (uint8_t)(index + 1U);
         }
 
-        if (status.mode != WIFI_MANAGER_MODE_PROMISCUOUS) {
-            command_context_write_line(context, "ERR WIFI_NOT_PROMISCUOUS\n");
-            return true;
-        }
-
         channels_result = read_named_arg(subcommand_args, "channels", channels_string, sizeof(channels_string));
         if (channels_result == WIFI_READ_ARG_INVALID ||
             (channels_result == WIFI_READ_ARG_FOUND &&
@@ -456,6 +451,16 @@ bool wifi_promiscuous_command_try_handle(const char *args, const command_context
             (rssi_result == WIFI_READ_ARG_FOUND && !parse_i8(rssi_string, &config.rssi_min))) {
             write_operation_error(context, "SURVEY", ESP_ERR_INVALID_ARG);
             return true;
+        }
+
+        if (status.mode != WIFI_MANAGER_MODE_PROMISCUOUS) {
+            err = wifi_manager_enter_promiscuous(config.channels[0]);
+            if (err != ESP_OK) {
+                write_operation_error(context, "ENTER", err);
+                return true;
+            }
+
+            command_context_write_line(context, "WIFI PROMISCUOUS ENTERED\n");
         }
 
         err = wifi_manager_set_action(WIFI_MANAGER_ACTION_SURVEYING);
@@ -491,11 +496,6 @@ bool wifi_promiscuous_command_try_handle(const char *args, const command_context
         memset(interval_string, 0, sizeof(interval_string));
         memset(rssi_string, 0, sizeof(rssi_string));
 
-        if (status.mode != WIFI_MANAGER_MODE_PROMISCUOUS) {
-            command_context_write_line(context, "ERR WIFI_NOT_PROMISCUOUS\n");
-            return true;
-        }
-
         channel_result = read_named_arg(subcommand_args, "channel", channel_string, sizeof(channel_string));
         if (channel_result != WIFI_READ_ARG_FOUND || !parse_u32(channel_string, &channel) ||
             channel == 0U || channel > 14U) {
@@ -517,6 +517,16 @@ bool wifi_promiscuous_command_try_handle(const char *args, const command_context
             (rssi_result == WIFI_READ_ARG_FOUND && !parse_i8(rssi_string, &config.rssi_min))) {
             write_operation_error(context, "WATCH", ESP_ERR_INVALID_ARG);
             return true;
+        }
+
+        if (status.mode != WIFI_MANAGER_MODE_PROMISCUOUS) {
+            err = wifi_manager_enter_promiscuous(config.channel);
+            if (err != ESP_OK) {
+                write_operation_error(context, "ENTER", err);
+                return true;
+            }
+
+            command_context_write_line(context, "WIFI PROMISCUOUS ENTERED\n");
         }
 
         err = wifi_manager_set_action(WIFI_MANAGER_ACTION_WATCHING);
