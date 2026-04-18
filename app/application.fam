@@ -1,0 +1,8 @@
+App(
+    appid="fuse_radio",
+    name="Fuse Radio",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="fuse_radio_app",
+    requires=["gui"],
+    fap_category="Tools",
+)
