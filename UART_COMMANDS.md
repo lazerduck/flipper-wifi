@@ -49,6 +49,7 @@ ERR UNKNOWN_COMMAND
 | `WIFI STATUS` | Implemented | Read current STA state |
 | `WIFI DISCONNECT` | Implemented | Disconnect from current AP |
 | `WIFI DISCOVER` | Implemented | Probe the current IPv4 subnet for reachable hosts |
+| `WIFI HTTP preset=<ip|time|location>` | Implemented | Fetch a preset HTTP-backed network lookup |
 | `WIFI READ_MDNS host=<hostname>` | Implemented | Resolve an mDNS hostname on the connected network |
 | `WIFI PROMISCUOUS <ENTER|EXIT|SURVEY|WATCH|WATCH_STOP>` | Implemented | Enter passive capture mode and run RF observation commands |
 | `SEND <payload>` | Stub | Reserved, not implemented |
@@ -77,7 +78,7 @@ PONG
 Entering `WIFI` with no subcommand returns usage:
 
 ```text
-ERR USAGE WIFI <SCAN|STATUS|CONNECT|DISCONNECT|DISCOVER|READ_MDNS|PROMISCUOUS>
+ERR USAGE WIFI <SCAN|STATUS|CONNECT|DISCONNECT|DISCOVER|HTTP|READ_MDNS|PROMISCUOUS>
 ```
 
 If the subcommand is not recognized:
@@ -211,7 +212,48 @@ WIFI STATUS
 Successful response format:
 
 ```text
-WIFI STATUS mode=<IDLE|CONNECTED|PROMISCUOUS> action=<NONE|SCANNING|CONNECTING|DISCONNECTING|DISCOVERING|READING_MDNS|ENTERING_PROMISCUOUS|EXITING_PROMISCUOUS|SURVEYING|WATCHING> state=<IDLE|SCANNING|CONNECTING|CONNECTED|PROMISCUOUS> connected=<yes|no> ssid=<ssid|-> reason=<code>
+WIFI STATUS mode=<IDLE|CONNECTED|PROMISCUOUS> action=<NONE|SCANNING|CONNECTING|DISCONNECTING|DISCOVERING|READING_MDNS|REQUESTING_HTTP|ENTERING_PROMISCUOUS|EXITING_PROMISCUOUS|SURVEYING|WATCHING> state=<IDLE|SCANNING|CONNECTING|CONNECTED|PROMISCUOUS> connected=<yes|no> ssid=<ssid|-> reason=<code>
+```
+
+### `WIFI HTTP preset=<ip|time|location>`
+
+Performs one of the built-in HTTP lookups while the device is connected to an AP and has an IP address.
+
+Request examples:
+
+```text
+WIFI HTTP preset=ip
+WIFI HTTP preset=time
+WIFI HTTP preset=location
+```
+
+Successful response format:
+
+```text
+HTTP_LINE <text>
+HTTP_LINE <text>
+...
+HTTP_DONE
+```
+
+Usage error:
+
+```text
+ERR USAGE WIFI HTTP preset=<ip|time|location>
+```
+
+Preset error:
+
+```text
+ERR HTTP_UNKNOWN_PRESET
+```
+
+Execution failures may return:
+
+```text
+ERR HTTP_TIMEOUT
+ERR HTTP_NO_MEM
+ERR HTTP_FETCH_FAILED
 ```
 
 Field meanings:

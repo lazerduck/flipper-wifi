@@ -6,6 +6,7 @@ idf_component_register(
         "modules/ping/ping_command.c"
         "modules/wifi/connected/connected_command.c"
         "modules/wifi/connected/wifi_discovery.c"
+        "modules/wifi/connected/wifi_http.c"
         "modules/wifi/connected/wifi_mdns.c"
         "modules/wifi/promiscuous/promiscuous_command.c"
         "modules/wifi/promiscuous/wifi_promiscuous.c"
@@ -14,4 +15,4 @@ idf_component_register(
         "modules/send/send_command.c"
         "modules/query/query_command.c"
     INCLUDE_DIRS "."
-    REQUIRES esp_driver_gpio esp_driver_rmt esp_driver_uart esp_event esp_netif esp_timer esp_wifi lwip nvs_flash)
+    REQUIRES esp_driver_gpio esp_driver_rmt esp_driver_uart esp_event esp_http_client esp_netif esp_timer esp_wifi lwip nvs_flash)

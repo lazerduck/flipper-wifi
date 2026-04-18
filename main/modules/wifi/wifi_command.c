@@ -68,7 +68,7 @@ bool wifi_command_try_handle(const char *command_line, const command_context_t *
     }
 
     if (command_line[4] == '\0') {
-        command_context_write_line(context, "ERR USAGE WIFI <SCAN|STATUS|CONNECT|DISCONNECT|DISCOVER|READ_MDNS|PROMISCUOUS>\n");
+        command_context_write_line(context, "ERR USAGE WIFI <SCAN|STATUS|CONNECT|DISCONNECT|DISCOVER|HTTP|READ_MDNS|PROMISCUOUS>\n");
         return true;
     }
 

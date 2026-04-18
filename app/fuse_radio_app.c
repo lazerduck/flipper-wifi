@@ -357,6 +357,18 @@ static void
     }
 }
 
+static void fuse_radio_app_wifi_http_button_callback(
+    GuiButtonType button,
+    InputType type,
+    void* context) {
+    FuseRadioApp* app = context;
+
+    if(button == GuiButtonTypeCenter && type == InputTypeShort) {
+        view_dispatcher_send_custom_event(
+            app->view_dispatcher, FuseRadioCustomEventWifiHttpRefresh);
+    }
+}
+
 static void fuse_radio_app_wifi_discover_button_callback(
     GuiButtonType button,
     InputType type,
@@ -400,6 +412,11 @@ static void fuse_radio_app_reset_mdns_results(FuseRadioApp* app) {
     app->mdns_count = 0U;
     app->mdns_truncated_count = 0U;
     app->mdns_dirty = true;
+}
+
+static void fuse_radio_app_reset_http_results(FuseRadioApp* app) {
+    app->http_info_text[0] = '\0';
+    app->http_dirty = true;
 }
 
 static void fuse_radio_app_reset_promiscuous_results(FuseRadioApp* app) {
@@ -544,6 +561,19 @@ static void fuse_radio_app_append_mdns_text(FuseRadioApp* app, const char* fmt, 
     app->mdns_dirty = true;
 }
 
+static void fuse_radio_app_append_http_text(FuseRadioApp* app, const char* fmt, ...) {
+    const size_t used = strlen(app->http_info_text);
+    if(used >= sizeof(app->http_info_text) - 1U) {
+        return;
+    }
+
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(app->http_info_text + used, sizeof(app->http_info_text) - used, fmt, args);
+    va_end(args);
+    app->http_dirty = true;
+}
+
 static void fuse_radio_app_append_discover_text(FuseRadioApp* app, const char* fmt, ...) {
     const size_t used = strlen(app->discover_info_text);
     if(used >= sizeof(app->discover_info_text) - 1U) {
@@ -637,12 +667,14 @@ static bool fuse_radio_app_enable_otg(FuseRadioApp* app) {
 static void fuse_radio_app_reset_session_state(FuseRadioApp* app) {
     fuse_radio_app_reset_scan_results(app);
     fuse_radio_app_reset_discover_results(app);
+    fuse_radio_app_reset_http_results(app);
     fuse_radio_app_reset_mdns_results(app);
     fuse_radio_app_reset_promiscuous_results(app);
     fuse_radio_app_reset_wifi_status(app);
     app->current_request = FuseRadioRequestNone;
     app->text_input_mode = FuseRadioTextInputNone;
     app->promiscuous_preset = FuseRadioPromiscuousPresetNone;
+    app->http_preset = FuseRadioHttpPresetNone;
     app->connect_flow_active = false;
     app->line_length = 0U;
     app->line_overflow = false;
@@ -833,6 +865,60 @@ static bool fuse_radio_app_send_wifi_discover_command(FuseRadioApp* app) {
     return fuse_radio_app_send_line(app, "WIFI DISCOVER\n");
 }
 
+static const char* fuse_radio_app_http_preset_command(FuseRadioHttpPreset preset) {
+    switch(preset) {
+    case FuseRadioHttpPresetPublicIp:
+        return "ip";
+    case FuseRadioHttpPresetTime:
+        return "time";
+    case FuseRadioHttpPresetLocation:
+        return "location";
+    case FuseRadioHttpPresetNone:
+    default:
+        return NULL;
+    }
+}
+
+static const char* fuse_radio_app_http_preset_title(FuseRadioHttpPreset preset) {
+    switch(preset) {
+    case FuseRadioHttpPresetPublicIp:
+        return "Public IP";
+    case FuseRadioHttpPresetTime:
+        return "Time";
+    case FuseRadioHttpPresetLocation:
+        return "Location";
+    case FuseRadioHttpPresetNone:
+    default:
+        return "HTTP";
+    }
+}
+
+static const char* fuse_radio_app_http_preset_start_text(FuseRadioHttpPreset preset) {
+    switch(preset) {
+    case FuseRadioHttpPresetPublicIp:
+        return "Fetching public IP...\n";
+    case FuseRadioHttpPresetTime:
+        return "Fetching current time...\n";
+    case FuseRadioHttpPresetLocation:
+        return "Fetching approximate location...\n";
+    case FuseRadioHttpPresetNone:
+    default:
+        return "Fetching HTTP preset...\n";
+    }
+}
+
+static bool fuse_radio_app_send_wifi_http_command(FuseRadioApp* app, FuseRadioHttpPreset preset) {
+    const char* command_name = fuse_radio_app_http_preset_command(preset);
+    char command[64];
+
+    if(!command_name) {
+        return false;
+    }
+
+    snprintf(command, sizeof(command), "WIFI HTTP preset=%s\n", command_name);
+    return fuse_radio_app_send_line(app, command);
+}
+
 static bool fuse_radio_app_send_wifi_mdns_command(FuseRadioApp* app, const char* host) {
     char command[128];
     snprintf(command, sizeof(command), "WIFI READ_MDNS host=%s\n", host);
@@ -957,6 +1043,33 @@ bool fuse_radio_app_start_wifi_discover(FuseRadioApp* app) {
         app->current_request = FuseRadioRequestNone;
         fuse_radio_app_reset_discover_results(app);
         fuse_radio_app_append_discover_text(app, "UART write failed while starting discovery.");
+        return false;
+    }
+
+    return true;
+}
+
+bool fuse_radio_app_start_wifi_http_request(FuseRadioApp* app, FuseRadioHttpPreset preset) {
+    app->http_preset = preset;
+    fuse_radio_app_strlcpy(
+        app->http_title, fuse_radio_app_http_preset_title(preset), sizeof(app->http_title));
+
+    if(app->module_state != FuseRadioModuleStateDetected) {
+        fuse_radio_app_reset_http_results(app);
+        fuse_radio_app_append_http_text(app, "Board is not ready.");
+        return false;
+    }
+
+    app->current_request = FuseRadioRequestHttp;
+    fuse_radio_app_set_wifi_action(app, FuseRadioWifiActionRequestingHttp, "REQUESTING_HTTP");
+    fuse_radio_app_reset_http_results(app);
+    fuse_radio_app_append_http_text(app, "%s", fuse_radio_app_http_preset_start_text(preset));
+
+    if(!fuse_radio_app_send_wifi_http_command(app, preset)) {
+        app->current_request = FuseRadioRequestNone;
+        fuse_radio_app_set_wifi_action(app, FuseRadioWifiActionNone, "NONE");
+        fuse_radio_app_reset_http_results(app);
+        fuse_radio_app_append_http_text(app, "UART write failed while starting HTTP request.");
         return false;
     }
 
@@ -1183,6 +1296,14 @@ static void fuse_radio_app_parse_mdns_line(FuseRadioApp* app, const char* line) 
     fuse_radio_app_append_mdns_text(app, "%s\n%s (%s)\n\n", host_text, addr_text, family_text);
 }
 
+static void fuse_radio_app_parse_http_line(FuseRadioApp* app, const char* line) {
+    if(strncmp(line, "HTTP_LINE ", 10) == 0) {
+        fuse_radio_app_append_http_text(app, "%s\n", line + 10);
+    } else {
+        fuse_radio_app_append_http_text(app, "%s\n", line);
+    }
+}
+
 static void fuse_radio_app_parse_discover_network_line(FuseRadioApp* app, const char* line) {
     const char* subnet = strstr(line, "subnet=");
     const char* self = strstr(line, " self=");
@@ -1358,8 +1479,12 @@ static void fuse_radio_app_parse_wifi_status(FuseRadioApp* app, const char* line
         app->wifi_action = FuseRadioWifiActionDisconnecting;
     } else if(strcmp(app->wifi_status_action, "DISCOVERING") == 0) {
         app->wifi_action = FuseRadioWifiActionDiscovering;
-    } else if(strcmp(app->wifi_status_action, "RESOLVING_MDNS") == 0) {
+    } else if(
+        strcmp(app->wifi_status_action, "RESOLVING_MDNS") == 0 ||
+        strcmp(app->wifi_status_action, "READING_MDNS") == 0) {
         app->wifi_action = FuseRadioWifiActionResolvingMdns;
+    } else if(strcmp(app->wifi_status_action, "REQUESTING_HTTP") == 0) {
+        app->wifi_action = FuseRadioWifiActionRequestingHttp;
     } else if(strcmp(app->wifi_status_action, "ENTERING_PROMISCUOUS") == 0) {
         app->wifi_action = FuseRadioWifiActionEnteringPromiscuous;
     } else if(strcmp(app->wifi_status_action, "EXITING_PROMISCUOUS") == 0) {
@@ -1435,6 +1560,14 @@ static void fuse_radio_app_handle_error_line(FuseRadioApp* app, const char* line
     if(app->current_request == FuseRadioRequestMdns) {
         fuse_radio_app_reset_mdns_results(app);
         fuse_radio_app_append_mdns_text(app, "%s", line);
+        fuse_radio_app_set_wifi_action(app, FuseRadioWifiActionNone, "NONE");
+        app->current_request = FuseRadioRequestNone;
+        return;
+    }
+
+    if(app->current_request == FuseRadioRequestHttp) {
+        fuse_radio_app_reset_http_results(app);
+        fuse_radio_app_append_http_text(app, "%s", line);
         fuse_radio_app_set_wifi_action(app, FuseRadioWifiActionNone, "NONE");
         app->current_request = FuseRadioRequestNone;
         return;
@@ -1578,6 +1711,14 @@ static void fuse_radio_app_handle_line(FuseRadioApp* app, const char* line) {
     } else if(strncmp(line, "WIFI STATUS ", 12) == 0) {
         app->current_request = FuseRadioRequestNone;
         fuse_radio_app_parse_wifi_status(app, line);
+    } else if(strncmp(line, "HTTP_LINE ", 10) == 0) {
+        fuse_radio_app_parse_http_line(app, line);
+    } else if(strcmp(line, "HTTP_DONE") == 0) {
+        if(app->http_info_text[0] == '\0') {
+            fuse_radio_app_append_http_text(app, "No HTTP response data.\n");
+        }
+        fuse_radio_app_set_wifi_action(app, FuseRadioWifiActionNone, "NONE");
+        app->current_request = FuseRadioRequestNone;
     } else if(strncmp(line, "MDNS_COUNT ", 11) == 0) {
         app->mdns_count = (uint8_t)strtoul(line + 11, NULL, 10);
         fuse_radio_app_reset_mdns_results(app);
@@ -2057,6 +2198,27 @@ void fuse_radio_app_refresh_mdns_widget(FuseRadioApp* app) {
     app->mdns_dirty = false;
 }
 
+void fuse_radio_app_refresh_http_widget(FuseRadioApp* app) {
+    furi_assert(app);
+
+    const bool http_active = app->current_request == FuseRadioRequestHttp;
+
+    widget_reset(app->widget);
+    widget_add_string_element(
+        app->widget, 64, 5, AlignCenter, AlignTop, FontPrimary, app->http_title);
+    widget_add_text_scroll_element(app->widget, 0, 15, 128, 38, app->http_info_text);
+    if(!http_active) {
+        widget_add_button_element(
+            app->widget,
+            GuiButtonTypeCenter,
+            "Query",
+            fuse_radio_app_wifi_http_button_callback,
+            app);
+    }
+
+    app->http_dirty = false;
+}
+
 void fuse_radio_app_refresh_promiscuous_widget(FuseRadioApp* app) {
     furi_assert(app);
 
@@ -2100,6 +2262,7 @@ void fuse_radio_app_refresh_scan_view(FuseRadioApp* app) {
 static bool fuse_radio_app_scene_requires_connected(uint32_t scene) {
     return scene == FuseRadioSceneWifiConnectedMenu ||
            scene == FuseRadioSceneWifiDiscoverResult ||
+           scene == FuseRadioSceneWifiHttpResult ||
            scene == FuseRadioSceneWifiMdnsHost ||
            scene == FuseRadioSceneWifiMdnsResult;
 }
@@ -2125,9 +2288,11 @@ static bool fuse_radio_app_scene_mode_is_valid(FuseRadioApp* app, uint32_t scene
 
         if(app->current_request == FuseRadioRequestConnect ||
            app->current_request == FuseRadioRequestDiscover ||
+              app->current_request == FuseRadioRequestHttp ||
            app->current_request == FuseRadioRequestMdns ||
            app->wifi_action == FuseRadioWifiActionConnecting ||
            app->wifi_action == FuseRadioWifiActionDiscovering ||
+              app->wifi_action == FuseRadioWifiActionRequestingHttp ||
            app->wifi_action == FuseRadioWifiActionResolvingMdns) {
             return true;
         }
@@ -2276,6 +2441,9 @@ void fuse_radio_app_handle_tick(FuseRadioApp* app) {
     }
     if(app->mdns_dirty && scene == FuseRadioSceneWifiMdnsResult) {
         fuse_radio_app_refresh_mdns_widget(app);
+    }
+    if(app->http_dirty && scene == FuseRadioSceneWifiHttpResult) {
+        fuse_radio_app_refresh_http_widget(app);
     }
     if(scene == FuseRadioSceneWifiPromiscuousSurveyProgress) {
         if(app->promiscuous_dirty) {

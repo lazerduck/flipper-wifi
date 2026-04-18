@@ -57,7 +57,7 @@ bool fuse_radio_scene_wifi_connect_ssid_on_event(void* context, SceneManagerEven
             if(saved_password && strcmp(app->skip_auto_password_ssid, ap->ssid) != 0) {
                 app->connect_password_auto_used = true;
                 fuse_radio_app_start_wifi_connect(app);
-                scene_manager_next_scene(app->scene_manager, FuseRadioSceneWifiStatus);
+                scene_manager_next_scene(app->scene_manager, FuseRadioSceneWifiConnectedMenu);
                 return true;
             }
 

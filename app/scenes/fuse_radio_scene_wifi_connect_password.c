@@ -28,7 +28,7 @@ bool fuse_radio_scene_wifi_connect_password_on_event(void* context, SceneManager
             app->skip_auto_password_ssid[0] = '\0';
         }
         fuse_radio_app_start_wifi_connect(app);
-        scene_manager_next_scene(app->scene_manager, FuseRadioSceneWifiStatus);
+        scene_manager_next_scene(app->scene_manager, FuseRadioSceneWifiConnectedMenu);
         return true;
     }
 

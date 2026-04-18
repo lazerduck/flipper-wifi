@@ -4,15 +4,22 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "sdkconfig.h"
+
 #include "lwip/netdb.h"
 #include "lwip/sockets.h"
 
 #define WIFI_MDNS_RESULT_LINE_MAX_LENGTH 256
 #define WIFI_MDNS_HOSTNAME_MAX_LENGTH 128
 #define WIFI_MDNS_MAX_RESULTS 4
+#if CONFIG_LWIP_IPV6
+#define WIFI_MDNS_ADDRESS_MAX_LENGTH INET6_ADDRSTRLEN
+#else
+#define WIFI_MDNS_ADDRESS_MAX_LENGTH INET_ADDRSTRLEN
+#endif
 
 typedef struct {
-    char address[INET6_ADDRSTRLEN];
+    char address[WIFI_MDNS_ADDRESS_MAX_LENGTH];
     int family;
 } wifi_mdns_result_entry_t;
 
@@ -51,8 +58,10 @@ static const char *address_family_to_string(int family)
     switch (family) {
     case AF_INET:
         return "IPV4";
+#if CONFIG_LWIP_IPV6
     case AF_INET6:
         return "IPV6";
+#endif
     default:
         return "UNKNOWN";
     }
@@ -69,10 +78,14 @@ static bool format_sockaddr_address(const struct sockaddr *address, char *buffer
     if (address->sa_family == AF_INET) {
         const struct sockaddr_in *ipv4 = (const struct sockaddr_in *)address;
         raw_address = &ipv4->sin_addr;
-    } else if (address->sa_family == AF_INET6) {
+    }
+#if CONFIG_LWIP_IPV6
+    else if (address->sa_family == AF_INET6) {
         const struct sockaddr_in6 *ipv6 = (const struct sockaddr_in6 *)address;
         raw_address = &ipv6->sin6_addr;
-    } else {
+    }
+#endif
+    else {
         return false;
     }
 
@@ -112,7 +125,11 @@ esp_err_t wifi_mdns_query_hostname(const char *host, wifi_mdns_result_writer_t w
         return err;
     }
 
+#if CONFIG_LWIP_IPV6
     hints.ai_family = AF_UNSPEC;
+#else
+    hints.ai_family = AF_INET;
+#endif
     hints.ai_socktype = SOCK_STREAM;
 
     getaddrinfo_result = getaddrinfo(normalized_host, NULL, &hints, &results);
@@ -121,7 +138,7 @@ esp_err_t wifi_mdns_query_hostname(const char *host, wifi_mdns_result_writer_t w
     }
 
     for (result = results; result != NULL; result = result->ai_next) {
-        char address[INET6_ADDRSTRLEN];
+        char address[WIFI_MDNS_ADDRESS_MAX_LENGTH];
 
         memset(address, 0, sizeof(address));
         if (!format_sockaddr_address(result->ai_addr, address, sizeof(address))) {

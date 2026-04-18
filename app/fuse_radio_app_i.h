@@ -33,6 +33,7 @@
 #define FUSE_RADIO_MAX_HOST_LEN       63U
 #define FUSE_RADIO_MAX_SAVED_NETWORKS 12U
 #define FUSE_RADIO_WIFI_INFO_SIZE     256U
+#define FUSE_RADIO_HTTP_INFO_SIZE     768U
 #define FUSE_RADIO_MDNS_INFO_SIZE     512U
 #define FUSE_RADIO_DISCOVER_INFO_SIZE 1024U
 #define FUSE_RADIO_PROMISCUOUS_INFO_SIZE 1024U
@@ -73,6 +74,7 @@ typedef enum {
     FuseRadioRequestConnect,
     FuseRadioRequestDisconnect,
     FuseRadioRequestDiscover,
+    FuseRadioRequestHttp,
     FuseRadioRequestMdns,
     FuseRadioRequestPromiscuousEnter,
     FuseRadioRequestPromiscuousExit,
@@ -98,6 +100,7 @@ typedef enum {
     FuseRadioCustomEventWifiDiscoverRefresh,
     FuseRadioCustomEventWifiStatusRefresh,
     FuseRadioCustomEventWifiStatusMenu,
+    FuseRadioCustomEventWifiHttpRefresh,
     FuseRadioCustomEventWifiMdnsRefresh,
     FuseRadioCustomEventWifiConnectedReady,
     FuseRadioCustomEventWifiPromiscuousRepeat,
@@ -108,6 +111,13 @@ typedef enum {
     FuseRadioCustomEventWifiSurveyDone,
     FuseRadioCustomEventWifiSurveyFailed,
 } FuseRadioCustomEvent;
+
+typedef enum {
+    FuseRadioHttpPresetNone,
+    FuseRadioHttpPresetPublicIp,
+    FuseRadioHttpPresetTime,
+    FuseRadioHttpPresetLocation,
+} FuseRadioHttpPreset;
 
 typedef enum {
     FuseRadioPromiscuousPresetNone,
@@ -157,6 +167,7 @@ struct FuseRadioApp {
     FuseRadioRequest current_request;
     FuseRadioTextInputMode text_input_mode;
     FuseRadioPromiscuousPreset promiscuous_preset;
+    FuseRadioHttpPreset http_preset;
     FuseRadioScanResults scan_results;
     FuseRadioSurveyResults survey_results;
     FuseRadioWatchSummary watch_summary;
@@ -179,6 +190,8 @@ struct FuseRadioApp {
     char wifi_status_action[24];
     char wifi_status_ssid[FUSE_RADIO_MAX_SSID_LENGTH + 1U];
     char wifi_info_text[FUSE_RADIO_WIFI_INFO_SIZE];
+    char http_title[24];
+    char http_info_text[FUSE_RADIO_HTTP_INFO_SIZE];
     char discover_info_text[FUSE_RADIO_DISCOVER_INFO_SIZE];
     char mdns_info_text[FUSE_RADIO_MDNS_INFO_SIZE];
     char promiscuous_info_text[FUSE_RADIO_PROMISCUOUS_INFO_SIZE];
@@ -220,6 +233,7 @@ struct FuseRadioApp {
     bool module_detect_event_sent;
     bool status_dirty;
     bool wifi_info_dirty;
+    bool http_dirty;
     bool discover_dirty;
     bool mdns_dirty;
     bool promiscuous_dirty;
@@ -238,6 +252,7 @@ bool fuse_radio_app_request_wifi_status(FuseRadioApp* app);
 bool fuse_radio_app_start_wifi_connect(FuseRadioApp* app);
 bool fuse_radio_app_start_wifi_disconnect(FuseRadioApp* app);
 bool fuse_radio_app_start_wifi_discover(FuseRadioApp* app);
+bool fuse_radio_app_start_wifi_http_request(FuseRadioApp* app, FuseRadioHttpPreset preset);
 bool fuse_radio_app_start_wifi_mdns_query(FuseRadioApp* app);
 bool fuse_radio_app_start_wifi_promiscuous_enter(FuseRadioApp* app, uint8_t channel);
 bool fuse_radio_app_start_wifi_promiscuous_exit(FuseRadioApp* app);
@@ -249,6 +264,7 @@ void fuse_radio_app_process_rx(FuseRadioApp* app);
 void fuse_radio_app_handle_tick(FuseRadioApp* app);
 void fuse_radio_app_refresh_status_widget(FuseRadioApp* app);
 void fuse_radio_app_refresh_wifi_info_widget(FuseRadioApp* app);
+void fuse_radio_app_refresh_http_widget(FuseRadioApp* app);
 void fuse_radio_app_refresh_discover_widget(FuseRadioApp* app);
 void fuse_radio_app_refresh_mdns_widget(FuseRadioApp* app);
 void fuse_radio_app_refresh_promiscuous_widget(FuseRadioApp* app);

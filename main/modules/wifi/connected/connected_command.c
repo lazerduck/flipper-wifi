@@ -7,9 +7,11 @@
 #include "esp_wifi.h"
 
 #include "modules/wifi/connected/wifi_discovery.h"
+#include "modules/wifi/connected/wifi_http.h"
 #include "modules/wifi/connected/wifi_mdns.h"
 #include "modules/wifi/wifi_manager.h"
 
+#define WIFI_HTTP_PRESET_MAX_LENGTH 32
 #define WIFI_PASSWORD_MAX_LENGTH 65
 #define WIFI_MDNS_HOST_MAX_LENGTH 96
 #define WIFI_SSID_MAX_LENGTH 33
@@ -306,6 +308,52 @@ bool wifi_connected_command_try_handle(
         wifi_manager_clear_action();
         if (err != ESP_OK) {
             write_discover_error(context, err);
+            return true;
+        }
+
+        return true;
+    }
+
+    if (strcmp(subcommand_name, "HTTP") == 0) {
+        char preset[WIFI_HTTP_PRESET_MAX_LENGTH];
+        esp_err_t err;
+
+        memset(preset, 0, sizeof(preset));
+
+        if (!read_named_arg(args, "preset", preset, sizeof(preset))) {
+            command_context_write_line(context, "ERR USAGE WIFI HTTP preset=<ip|time|location>\n");
+            return true;
+        }
+
+        if (!wifi_connected_require_active_link(context)) {
+            return true;
+        }
+
+        err = wifi_manager_set_action(WIFI_MANAGER_ACTION_REQUESTING_HTTP);
+        if (err != ESP_OK) {
+            command_context_write_line(context, "ERR WIFI_STATUS_FAILED\n");
+            return true;
+        }
+
+        err = wifi_http_fetch_preset(preset, write_result_line, &writer_context);
+        wifi_manager_clear_action();
+        if (err == ESP_ERR_INVALID_ARG) {
+            command_context_write_line(context, "ERR HTTP_UNKNOWN_PRESET\n");
+            return true;
+        }
+
+        if (err == ESP_ERR_NO_MEM) {
+            command_context_write_line(context, "ERR HTTP_NO_MEM\n");
+            return true;
+        }
+
+        if (err == ESP_ERR_TIMEOUT) {
+            command_context_write_line(context, "ERR HTTP_TIMEOUT\n");
+            return true;
+        }
+
+        if (err != ESP_OK) {
+            command_context_write_line(context, "ERR HTTP_FETCH_FAILED\n");
             return true;
         }
 

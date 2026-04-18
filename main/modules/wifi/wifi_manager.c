@@ -157,6 +157,8 @@ const char *wifi_manager_action_to_string(wifi_manager_action_t action)
         return "DISCOVERING";
     case WIFI_MANAGER_ACTION_RESOLVING_MDNS:
         return "READING_MDNS";
+    case WIFI_MANAGER_ACTION_REQUESTING_HTTP:
+        return "REQUESTING_HTTP";
     case WIFI_MANAGER_ACTION_ENTERING_PROMISCUOUS:
         return "ENTERING_PROMISCUOUS";
     case WIFI_MANAGER_ACTION_EXITING_PROMISCUOUS:
@@ -183,6 +185,8 @@ const char *wifi_manager_state_to_string(wifi_manager_mode_t mode, wifi_manager_
         return "DISCOVERING";
     case WIFI_MANAGER_ACTION_RESOLVING_MDNS:
         return "READING_MDNS";
+    case WIFI_MANAGER_ACTION_REQUESTING_HTTP:
+        return "REQUESTING_HTTP";
     case WIFI_MANAGER_ACTION_ENTERING_PROMISCUOUS:
         return "ENTERING_PROMISCUOUS";
     case WIFI_MANAGER_ACTION_EXITING_PROMISCUOUS:

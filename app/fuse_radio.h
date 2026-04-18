@@ -39,6 +39,7 @@ typedef enum {
     FuseRadioWifiActionDisconnecting,
     FuseRadioWifiActionDiscovering,
     FuseRadioWifiActionResolvingMdns,
+    FuseRadioWifiActionRequestingHttp,
     FuseRadioWifiActionEnteringPromiscuous,
     FuseRadioWifiActionExitingPromiscuous,
     FuseRadioWifiActionSurveying,

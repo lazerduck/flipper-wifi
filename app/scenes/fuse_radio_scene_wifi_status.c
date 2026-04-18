@@ -1,6 +1,19 @@
 #include "../fuse_radio_app_i.h"
 
 static bool fuse_radio_scene_wifi_status_return_to_menu(FuseRadioApp* app) {
+    if(
+        app->wifi_mode == FuseRadioWifiModeConnected ||
+        app->current_request == FuseRadioRequestConnect ||
+        app->wifi_action == FuseRadioWifiActionConnecting) {
+        if(scene_manager_search_and_switch_to_previous_scene(
+               app->scene_manager, FuseRadioSceneWifiConnectedMenu)) {
+            return true;
+        }
+
+        scene_manager_next_scene(app->scene_manager, FuseRadioSceneWifiConnectedMenu);
+        return true;
+    }
+
     return scene_manager_search_and_switch_to_previous_scene(
         app->scene_manager, FuseRadioSceneWifiMenu);
 }
