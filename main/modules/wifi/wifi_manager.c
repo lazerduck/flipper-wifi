@@ -13,27 +13,25 @@
 #define WIFI_SCAN_LINE_MAX_LENGTH 160
 
 static bool s_wifi_initialized = false;
-static bool s_has_ip = false;
-static wifi_manager_state_t s_state = WIFI_MANAGER_STATE_IDLE;
-static char s_connected_ssid[33];
-static int s_last_disconnect_reason = 0;
-static wifi_manager_state_callback_t s_state_callback = NULL;
-static void *s_state_callback_context = NULL;
+static wifi_manager_status_t s_status;
+static wifi_manager_status_callback_t s_status_callback = NULL;
+static void *s_status_callback_context = NULL;
 
 static void notify_state_changed(void)
 {
-    if (s_state_callback != NULL) {
-        s_state_callback(s_state, s_state_callback_context);
+    if (s_status_callback != NULL) {
+        s_status_callback(&s_status, s_status_callback_context);
     }
 }
 
-static void set_state(wifi_manager_state_t state)
+static void set_mode_action(wifi_manager_mode_t mode, wifi_manager_action_t action)
 {
-    if (s_state == state) {
+    if (s_status.mode == mode && s_status.action == action) {
         return;
     }
 
-    s_state = state;
+    s_status.mode = mode;
+    s_status.action = action;
     notify_state_changed();
 }
 
@@ -55,7 +53,7 @@ static void copy_ssid(char *destination, size_t destination_size, const uint8_t 
 
 static void clear_connected_ssid(void)
 {
-    memset(s_connected_ssid, 0, sizeof(s_connected_ssid));
+    memset(s_status.ssid, 0, sizeof(s_status.ssid));
 }
 
 static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
@@ -66,35 +64,35 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         if (event_id == WIFI_EVENT_STA_CONNECTED) {
             wifi_event_sta_connected_t *connected_event = (wifi_event_sta_connected_t *)event_data;
 
-            set_state(WIFI_MANAGER_STATE_CONNECTING);
-            s_last_disconnect_reason = 0;
-            s_has_ip = false;
-            copy_ssid(s_connected_ssid, sizeof(s_connected_ssid), connected_event->ssid, connected_event->ssid_len);
+            s_status.last_disconnect_reason = 0;
+            s_status.has_ip = false;
+            copy_ssid(s_status.ssid, sizeof(s_status.ssid), connected_event->ssid, connected_event->ssid_len);
+            set_mode_action(WIFI_MANAGER_MODE_CONNECTED, WIFI_MANAGER_ACTION_CONNECTING);
             return;
         }
 
         if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
             wifi_event_sta_disconnected_t *disconnected_event = (wifi_event_sta_disconnected_t *)event_data;
 
-            s_has_ip = false;
-            set_state(WIFI_MANAGER_STATE_IDLE);
-            s_last_disconnect_reason = disconnected_event->reason;
+            s_status.has_ip = false;
+            s_status.last_disconnect_reason = disconnected_event->reason;
             clear_connected_ssid();
+            set_mode_action(WIFI_MANAGER_MODE_IDLE, WIFI_MANAGER_ACTION_NONE);
             return;
         }
     }
 
     if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
-        s_has_ip = true;
-        set_state(WIFI_MANAGER_STATE_CONNECTED);
-        s_last_disconnect_reason = 0;
+        s_status.has_ip = true;
+        s_status.last_disconnect_reason = 0;
+        set_mode_action(WIFI_MANAGER_MODE_CONNECTED, WIFI_MANAGER_ACTION_NONE);
         return;
     }
 
     if (event_base == IP_EVENT && event_id == IP_EVENT_STA_LOST_IP) {
-        s_has_ip = false;
-        if (s_state == WIFI_MANAGER_STATE_CONNECTED) {
-            set_state(WIFI_MANAGER_STATE_CONNECTING);
+        s_status.has_ip = false;
+        if (s_status.mode == WIFI_MANAGER_MODE_CONNECTED) {
+            set_mode_action(WIFI_MANAGER_MODE_CONNECTED, WIFI_MANAGER_ACTION_CONNECTING);
         }
     }
 }
@@ -105,11 +103,7 @@ static void populate_status(wifi_manager_status_t *status)
         return;
     }
 
-    status->state = s_state;
-    status->has_ip = s_has_ip;
-    status->last_disconnect_reason = s_last_disconnect_reason;
-    memset(status->ssid, 0, sizeof(status->ssid));
-    memcpy(status->ssid, s_connected_ssid, sizeof(status->ssid));
+    memcpy(status, &s_status, sizeof(*status));
 }
 
 static const char *auth_mode_to_string(wifi_auth_mode_t auth_mode)
@@ -134,19 +128,81 @@ static const char *auth_mode_to_string(wifi_auth_mode_t auth_mode)
     }
 }
 
-const char *wifi_manager_state_to_string(wifi_manager_state_t state)
+const char *wifi_manager_mode_to_string(wifi_manager_mode_t mode)
 {
-    switch (state) {
-    case WIFI_MANAGER_STATE_IDLE:
+    switch (mode) {
+    case WIFI_MANAGER_MODE_IDLE:
         return "IDLE";
-    case WIFI_MANAGER_STATE_SCANNING:
-        return "SCANNING";
-    case WIFI_MANAGER_STATE_CONNECTING:
-        return "CONNECTING";
-    case WIFI_MANAGER_STATE_CONNECTED:
+    case WIFI_MANAGER_MODE_CONNECTED:
         return "CONNECTED";
+    case WIFI_MANAGER_MODE_PROMISCUOUS:
+        return "PROMISCUOUS";
     default:
         return "UNKNOWN";
+    }
+}
+
+const char *wifi_manager_action_to_string(wifi_manager_action_t action)
+{
+    switch (action) {
+    case WIFI_MANAGER_ACTION_NONE:
+        return "NONE";
+    case WIFI_MANAGER_ACTION_SCANNING:
+        return "SCANNING";
+    case WIFI_MANAGER_ACTION_CONNECTING:
+        return "CONNECTING";
+    case WIFI_MANAGER_ACTION_DISCONNECTING:
+        return "DISCONNECTING";
+    case WIFI_MANAGER_ACTION_DISCOVERING:
+        return "DISCOVERING";
+    case WIFI_MANAGER_ACTION_RESOLVING_MDNS:
+        return "READING_MDNS";
+    case WIFI_MANAGER_ACTION_ENTERING_PROMISCUOUS:
+        return "ENTERING_PROMISCUOUS";
+    case WIFI_MANAGER_ACTION_EXITING_PROMISCUOUS:
+        return "EXITING_PROMISCUOUS";
+    case WIFI_MANAGER_ACTION_SURVEYING:
+        return "SURVEYING";
+    case WIFI_MANAGER_ACTION_WATCHING:
+        return "WATCHING";
+    default:
+        return "UNKNOWN";
+    }
+}
+
+const char *wifi_manager_state_to_string(wifi_manager_mode_t mode, wifi_manager_action_t action)
+{
+    switch (action) {
+    case WIFI_MANAGER_ACTION_SCANNING:
+        return "SCANNING";
+    case WIFI_MANAGER_ACTION_CONNECTING:
+        return "CONNECTING";
+    case WIFI_MANAGER_ACTION_DISCONNECTING:
+        return "DISCONNECTING";
+    case WIFI_MANAGER_ACTION_DISCOVERING:
+        return "DISCOVERING";
+    case WIFI_MANAGER_ACTION_RESOLVING_MDNS:
+        return "READING_MDNS";
+    case WIFI_MANAGER_ACTION_ENTERING_PROMISCUOUS:
+        return "ENTERING_PROMISCUOUS";
+    case WIFI_MANAGER_ACTION_EXITING_PROMISCUOUS:
+        return "EXITING_PROMISCUOUS";
+    case WIFI_MANAGER_ACTION_SURVEYING:
+        return "SURVEYING";
+    case WIFI_MANAGER_ACTION_WATCHING:
+        return "WATCHING";
+    default:
+        break;
+    }
+
+    switch (mode) {
+    case WIFI_MANAGER_MODE_CONNECTED:
+        return "CONNECTED";
+    case WIFI_MANAGER_MODE_PROMISCUOUS:
+        return "PROMISCUOUS";
+    case WIFI_MANAGER_MODE_IDLE:
+    default:
+        return "IDLE";
     }
 }
 
@@ -225,9 +281,9 @@ esp_err_t wifi_manager_init(void)
     }
 
     s_wifi_initialized = true;
-    s_state = WIFI_MANAGER_STATE_IDLE;
-    s_has_ip = false;
-    s_last_disconnect_reason = 0;
+    memset(&s_status, 0, sizeof(s_status));
+    s_status.mode = WIFI_MANAGER_MODE_IDLE;
+    s_status.action = WIFI_MANAGER_ACTION_NONE;
     clear_connected_ssid();
     notify_state_changed();
     return ESP_OK;
@@ -251,18 +307,30 @@ esp_err_t wifi_manager_refresh_status(wifi_manager_status_t *status)
         return ESP_ERR_INVALID_STATE;
     }
 
+    if (s_status.mode == WIFI_MANAGER_MODE_PROMISCUOUS) {
+        populate_status(status);
+        return ESP_OK;
+    }
+
     esp_err_t err = esp_wifi_sta_get_ap_info(&ap_info);
     if (err == ESP_OK) {
-        copy_ssid(s_connected_ssid, sizeof(s_connected_ssid), ap_info.ssid, sizeof(ap_info.ssid));
-        if (s_has_ip) {
-            set_state(WIFI_MANAGER_STATE_CONNECTED);
-        } else if (s_state != WIFI_MANAGER_STATE_SCANNING) {
-            set_state(WIFI_MANAGER_STATE_CONNECTING);
+        copy_ssid(s_status.ssid, sizeof(s_status.ssid), ap_info.ssid, sizeof(ap_info.ssid));
+        if (s_status.has_ip) {
+            if (s_status.action == WIFI_MANAGER_ACTION_CONNECTING ||
+                s_status.action == WIFI_MANAGER_ACTION_DISCONNECTING) {
+                set_mode_action(WIFI_MANAGER_MODE_CONNECTED, WIFI_MANAGER_ACTION_NONE);
+            }
+        } else if (s_status.action == WIFI_MANAGER_ACTION_NONE) {
+            set_mode_action(WIFI_MANAGER_MODE_CONNECTED, WIFI_MANAGER_ACTION_CONNECTING);
         }
     } else if (err == ESP_ERR_WIFI_NOT_CONNECT) {
-        s_has_ip = false;
-        if (s_state != WIFI_MANAGER_STATE_SCANNING) {
-            set_state(WIFI_MANAGER_STATE_IDLE);
+        s_status.has_ip = false;
+        if (s_status.action == WIFI_MANAGER_ACTION_SCANNING) {
+            s_status.mode = WIFI_MANAGER_MODE_IDLE;
+        } else if (s_status.action == WIFI_MANAGER_ACTION_CONNECTING ||
+                   s_status.action == WIFI_MANAGER_ACTION_DISCONNECTING ||
+                   s_status.action == WIFI_MANAGER_ACTION_NONE) {
+            set_mode_action(WIFI_MANAGER_MODE_IDLE, WIFI_MANAGER_ACTION_NONE);
         }
         clear_connected_ssid();
         err = ESP_OK;
@@ -280,14 +348,19 @@ esp_err_t wifi_manager_scan_aps(wifi_scan_result_writer_t write_line, void *cont
     uint16_t ap_count = WIFI_SCAN_MAX_APS;
     uint16_t total_ap_count = 0;
     char line[WIFI_SCAN_LINE_MAX_LENGTH];
-    wifi_manager_state_t previous_state;
+    wifi_manager_action_t previous_action;
 
     if (!s_wifi_initialized) {
         return ESP_ERR_INVALID_STATE;
     }
 
-    previous_state = s_state;
-    set_state(WIFI_MANAGER_STATE_SCANNING);
+    if (s_status.mode == WIFI_MANAGER_MODE_PROMISCUOUS) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    previous_action = s_status.action;
+    s_status.action = WIFI_MANAGER_ACTION_SCANNING;
+    notify_state_changed();
 
     wifi_scan_config_t scan_config = {
         .ssid = NULL,
@@ -298,13 +371,15 @@ esp_err_t wifi_manager_scan_aps(wifi_scan_result_writer_t write_line, void *cont
 
     esp_err_t err = esp_wifi_scan_start(&scan_config, true);
     if (err != ESP_OK) {
-        set_state(previous_state);
+        s_status.action = previous_action;
+        notify_state_changed();
         return err;
     }
 
     err = esp_wifi_scan_get_ap_num(&total_ap_count);
     if (err != ESP_OK) {
-        set_state(previous_state);
+        s_status.action = previous_action;
+        notify_state_changed();
         return err;
     }
 
@@ -315,7 +390,8 @@ esp_err_t wifi_manager_scan_aps(wifi_scan_result_writer_t write_line, void *cont
     if (ap_count > 0) {
         err = esp_wifi_scan_get_ap_records(&ap_count, ap_records);
         if (err != ESP_OK) {
-            set_state(previous_state);
+            s_status.action = previous_action;
+            notify_state_changed();
             return err;
         }
     }
@@ -345,7 +421,8 @@ esp_err_t wifi_manager_scan_aps(wifi_scan_result_writer_t write_line, void *cont
         write_line("SCAN_DONE\n", context);
     }
 
-    set_state(previous_state);
+    s_status.action = previous_action;
+    notify_state_changed();
 
     return ESP_OK;
 }
@@ -358,6 +435,10 @@ esp_err_t wifi_manager_connect(const char *ssid, const char *password)
     esp_err_t err;
 
     if (!s_wifi_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (s_status.mode == WIFI_MANAGER_MODE_PROMISCUOUS) {
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -386,12 +467,12 @@ esp_err_t wifi_manager_connect(const char *ssid, const char *password)
         return err;
     }
 
-    set_state(WIFI_MANAGER_STATE_CONNECTING);
-    s_has_ip = false;
-    s_last_disconnect_reason = 0;
+    s_status.has_ip = false;
+    s_status.last_disconnect_reason = 0;
     clear_connected_ssid();
-    memcpy(s_connected_ssid, ssid, ssid_length);
-    s_connected_ssid[ssid_length] = '\0';
+    memcpy(s_status.ssid, ssid, ssid_length);
+    s_status.ssid[ssid_length] = '\0';
+    set_mode_action(WIFI_MANAGER_MODE_CONNECTED, WIFI_MANAGER_ACTION_CONNECTING);
 
     return esp_wifi_connect();
 }
@@ -402,15 +483,141 @@ esp_err_t wifi_manager_disconnect(void)
         return ESP_ERR_INVALID_STATE;
     }
 
+    if (s_status.mode == WIFI_MANAGER_MODE_PROMISCUOUS) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (s_status.mode == WIFI_MANAGER_MODE_CONNECTED) {
+        set_mode_action(WIFI_MANAGER_MODE_CONNECTED, WIFI_MANAGER_ACTION_DISCONNECTING);
+    }
+
     return esp_wifi_disconnect();
 }
 
-void wifi_manager_set_state_callback(wifi_manager_state_callback_t callback, void *context)
+esp_err_t wifi_manager_enter_promiscuous(uint8_t channel)
 {
-    s_state_callback = callback;
-    s_state_callback_context = context;
+    wifi_promiscuous_filter_t filter = {
+        .filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT |
+            WIFI_PROMIS_FILTER_MASK_CTRL |
+            WIFI_PROMIS_FILTER_MASK_DATA,
+    };
+    wifi_promiscuous_filter_t control_filter = {
+        .filter_mask = WIFI_PROMIS_CTRL_FILTER_MASK_ALL,
+    };
+    esp_err_t err;
+
+    if (!s_wifi_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (channel == 0U || channel > 14U) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (s_status.mode == WIFI_MANAGER_MODE_CONNECTED) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    set_mode_action(s_status.mode, WIFI_MANAGER_ACTION_ENTERING_PROMISCUOUS);
+
+    err = esp_wifi_set_promiscuous(false);
+    if (err != ESP_OK) {
+        set_mode_action(WIFI_MANAGER_MODE_IDLE, WIFI_MANAGER_ACTION_NONE);
+        return err;
+    }
+
+    err = esp_wifi_set_promiscuous_filter(&filter);
+    if (err != ESP_OK) {
+        set_mode_action(WIFI_MANAGER_MODE_IDLE, WIFI_MANAGER_ACTION_NONE);
+        return err;
+    }
+
+    err = esp_wifi_set_promiscuous_ctrl_filter(&control_filter);
+    if (err != ESP_OK) {
+        set_mode_action(WIFI_MANAGER_MODE_IDLE, WIFI_MANAGER_ACTION_NONE);
+        return err;
+    }
+
+    err = esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+    if (err != ESP_OK) {
+        set_mode_action(WIFI_MANAGER_MODE_IDLE, WIFI_MANAGER_ACTION_NONE);
+        return err;
+    }
+
+    err = esp_wifi_set_promiscuous(true);
+    if (err != ESP_OK) {
+        set_mode_action(WIFI_MANAGER_MODE_IDLE, WIFI_MANAGER_ACTION_NONE);
+        return err;
+    }
+
+    s_status.has_ip = false;
+    clear_connected_ssid();
+    set_mode_action(WIFI_MANAGER_MODE_PROMISCUOUS, WIFI_MANAGER_ACTION_NONE);
+    return ESP_OK;
+}
+
+esp_err_t wifi_manager_exit_promiscuous(void)
+{
+    esp_err_t err;
+
+    if (!s_wifi_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (s_status.mode != WIFI_MANAGER_MODE_PROMISCUOUS) {
+        return ESP_OK;
+    }
+
+    set_mode_action(WIFI_MANAGER_MODE_PROMISCUOUS, WIFI_MANAGER_ACTION_EXITING_PROMISCUOUS);
+
+    err = esp_wifi_set_promiscuous_rx_cb(NULL);
+    if (err != ESP_OK) {
+        set_mode_action(WIFI_MANAGER_MODE_PROMISCUOUS, WIFI_MANAGER_ACTION_NONE);
+        return err;
+    }
+
+    err = esp_wifi_set_promiscuous(false);
+    if (err != ESP_OK) {
+        set_mode_action(WIFI_MANAGER_MODE_PROMISCUOUS, WIFI_MANAGER_ACTION_NONE);
+        return err;
+    }
+
+    set_mode_action(WIFI_MANAGER_MODE_IDLE, WIFI_MANAGER_ACTION_NONE);
+    return ESP_OK;
+}
+
+esp_err_t wifi_manager_set_action(wifi_manager_action_t action)
+{
+    if (!s_wifi_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    s_status.action = action;
+    notify_state_changed();
+    return ESP_OK;
+}
+
+void wifi_manager_clear_action(void)
+{
+    if (!s_wifi_initialized) {
+        return;
+    }
+
+    if (s_status.action == WIFI_MANAGER_ACTION_CONNECTING ||
+        s_status.action == WIFI_MANAGER_ACTION_DISCONNECTING) {
+        return;
+    }
+
+    s_status.action = WIFI_MANAGER_ACTION_NONE;
+    notify_state_changed();
+}
+
+void wifi_manager_set_status_callback(wifi_manager_status_callback_t callback, void *context)
+{
+    s_status_callback = callback;
+    s_status_callback_context = context;
 
     if (callback != NULL) {
-        callback(s_state, context);
+        callback(&s_status, context);
     }
 }

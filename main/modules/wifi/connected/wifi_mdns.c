@@ -1,4 +1,4 @@
-#include "modules/wifi/wifi_mdns.h"
+#include "modules/wifi/connected/wifi_mdns.h"
 
 #include <stdbool.h>
 #include <stdio.h>

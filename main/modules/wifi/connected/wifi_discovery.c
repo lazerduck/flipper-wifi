@@ -1,4 +1,4 @@
-#include "modules/wifi/wifi_discovery.h"
+#include "modules/wifi/connected/wifi_discovery.h"
 
 #include <errno.h>
 #include <stdbool.h>
@@ -307,7 +307,8 @@ static esp_err_t wifi_discovery_receive_batch(
             return ESP_FAIL;
         }
 
-        if (source_address.ss_family == AF_INET && received_length >= (ssize_t)(sizeof(struct ip_hdr) + sizeof(struct icmp_echo_hdr))) {
+        if (source_address.ss_family == AF_INET &&
+            received_length >= (ssize_t)(sizeof(struct ip_hdr) + sizeof(struct icmp_echo_hdr))) {
             const struct ip_hdr *ip_header = (const struct ip_hdr *)recv_buffer;
             const struct icmp_echo_hdr *echo_reply =
                 (const struct icmp_echo_hdr *)(recv_buffer + IPH_HL_BYTES(ip_header));

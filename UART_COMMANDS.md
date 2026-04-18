@@ -50,6 +50,7 @@ ERR UNKNOWN_COMMAND
 | `WIFI DISCONNECT` | Implemented | Disconnect from current AP |
 | `WIFI DISCOVER` | Implemented | Probe the current IPv4 subnet for reachable hosts |
 | `WIFI READ_MDNS host=<hostname>` | Implemented | Resolve an mDNS hostname on the connected network |
+| `WIFI PROMISCUOUS <ENTER|EXIT|SURVEY|WATCH>` | Implemented | Enter passive capture mode and run RF observation commands |
 | `SEND <payload>` | Stub | Reserved, not implemented |
 | `QUERY <request>` | Stub | Reserved, not implemented |
 
@@ -76,7 +77,7 @@ PONG
 Entering `WIFI` with no subcommand returns usage:
 
 ```text
-ERR USAGE WIFI <SCAN|CONNECT|STATUS|READ_MDNS|DISCONNECT|DISCOVER>
+ERR USAGE WIFI <SCAN|STATUS|CONNECT|DISCONNECT|DISCOVER|READ_MDNS|PROMISCUOUS>
 ```
 
 If the subcommand is not recognized:
@@ -194,12 +195,12 @@ WIFI CONNECTING
 
 ```text
 WIFI STATUS
-WIFI STATUS state=CONNECTED connected=yes ssid=OfficeWiFi reason=0
+WIFI STATUS mode=CONNECTED action=NONE state=CONNECTED connected=yes ssid=OfficeWiFi reason=0
 ```
 
 ### `WIFI STATUS`
 
-Returns the current Wi-Fi station state snapshot.
+Returns the current Wi-Fi mode and current action snapshot.
 
 Request:
 
@@ -210,12 +211,14 @@ WIFI STATUS
 Successful response format:
 
 ```text
-WIFI STATUS state=<IDLE|SCANNING|CONNECTING|CONNECTED> connected=<yes|no> ssid=<ssid|-> reason=<code>
+WIFI STATUS mode=<IDLE|CONNECTED|PROMISCUOUS> action=<NONE|SCANNING|CONNECTING|DISCONNECTING|DISCOVERING|READING_MDNS|ENTERING_PROMISCUOUS|EXITING_PROMISCUOUS|SURVEYING|WATCHING> state=<IDLE|SCANNING|CONNECTING|CONNECTED|PROMISCUOUS> connected=<yes|no> ssid=<ssid|-> reason=<code>
 ```
 
 Field meanings:
 
-- `state`: internal station state
+- `mode`: top-level Wi-Fi mode
+- `action`: current activity within that mode
+- `state`: compatibility summary derived from `mode` and `action`
 - `connected`: `yes` only after the station has an IP address
 - `ssid`: currently connected or target SSID, `-` when none is known
 - `reason`: last disconnect reason code from the ESP-IDF Wi-Fi stack, `0` when none is recorded
@@ -236,17 +239,145 @@ Examples:
 
 ```text
 WIFI STATUS
-WIFI STATUS state=IDLE connected=no ssid=- reason=0
+WIFI STATUS mode=IDLE action=NONE state=IDLE connected=no ssid=- reason=0
 ```
 
 ```text
 WIFI STATUS
-WIFI STATUS state=CONNECTING connected=no ssid=OfficeWiFi reason=0
+WIFI STATUS mode=CONNECTED action=CONNECTING state=CONNECTING connected=no ssid=OfficeWiFi reason=0
 ```
 
 ```text
 WIFI STATUS
-WIFI STATUS state=CONNECTED connected=yes ssid=OfficeWiFi reason=0
+WIFI STATUS mode=CONNECTED action=NONE state=CONNECTED connected=yes ssid=OfficeWiFi reason=0
+```
+
+### `WIFI PROMISCUOUS <ENTER|EXIT|SURVEY|WATCH>`
+
+Promiscuous-mode commands live under a dedicated `WIFI` subtree.
+
+#### `WIFI PROMISCUOUS ENTER [channel=<n>]`
+
+Enables Wi-Fi promiscuous mode and tunes the radio to the requested channel.
+
+Successful response:
+
+```text
+WIFI PROMISCUOUS ENTERED
+```
+
+Usage error:
+
+```text
+ERR USAGE WIFI PROMISCUOUS ENTER [channel=<n>]
+```
+
+Possible failures:
+
+```text
+ERR WIFI_MODE_CONFLICT
+ERR WIFI_PROMISCUOUS_FAILED
+```
+
+Notes:
+
+- `channel` is optional and defaults to `1`.
+- Entering promiscuous mode is only allowed from the idle Wi-Fi mode.
+
+#### `WIFI PROMISCUOUS EXIT`
+
+Disables Wi-Fi promiscuous mode and returns the firmware to idle Wi-Fi mode.
+
+Successful response:
+
+```text
+WIFI PROMISCUOUS EXITED
+```
+
+Possible failures:
+
+```text
+ERR WIFI_PROMISCUOUS_FAILED
+```
+
+#### `WIFI PROMISCUOUS SURVEY [channels=<comma_list>] [dwell_ms=<ms>] [rssi_min=<dbm>]`
+
+Runs a blocking per-channel survey while promiscuous mode is active.
+
+Successful response format:
+
+```text
+SURVEY channel=<n> total=<frames> mgmt=<count> data=<count> ctrl=<count> misc=<count> beacons=<count> deauth=<count> unique=<count> max_rssi=<dbm> duration_ms=<ms>
+...
+SURVEY_DONE channels=<count> dwell_ms=<ms> duration_ms=<total_ms> recommended=<channel>
+```
+
+Possible failures:
+
+```text
+ERR WIFI_NOT_PROMISCUOUS
+ERR WIFI_PROMISCUOUS_BUSY
+ERR WIFI_SURVEY_FAILED
+ERR USAGE WIFI PROMISCUOUS SURVEY [channels=<comma_list>] [dwell_ms=<ms>] [rssi_min=<dbm>]
+```
+
+Notes:
+
+- `channels` defaults to `1` through `11`.
+- `dwell_ms` defaults to `250`.
+- `rssi_min` defaults to `-95` and filters weaker frames out of the counts.
+- `recommended` is currently the quietest surveyed channel by total observed frames.
+
+Example:
+
+```text
+WIFI PROMISCUOUS ENTER channel=1
+WIFI PROMISCUOUS ENTERED
+WIFI PROMISCUOUS SURVEY channels=1,6,11 dwell_ms=200
+SURVEY channel=1 total=142 mgmt=51 data=59 ctrl=28 misc=4 beacons=12 deauth=0 unique=19 max_rssi=-43 duration_ms=200
+SURVEY channel=6 total=87 mgmt=34 data=31 ctrl=20 misc=2 beacons=8 deauth=0 unique=11 max_rssi=-48 duration_ms=200
+SURVEY channel=11 total=24 mgmt=11 data=8 ctrl=5 misc=0 beacons=3 deauth=0 unique=5 max_rssi=-61 duration_ms=200
+SURVEY_DONE channels=3 dwell_ms=200 duration_ms=600 recommended=11
+```
+
+#### `WIFI PROMISCUOUS WATCH channel=<n> [duration_ms=<ms>] [rssi_min=<dbm>]`
+
+Runs a blocking fixed-channel observation window while promiscuous mode is active.
+
+Successful response format:
+
+```text
+WATCH channel=<n> total=<frames> mgmt=<count> data=<count> ctrl=<count> misc=<count> beacons=<count> deauth=<count> unique=<count> max_rssi=<dbm> duration_ms=<ms>
+WATCH_DONE channel=<n> duration_ms=<ms>
+```
+
+Possible failures:
+
+```text
+ERR WIFI_NOT_PROMISCUOUS
+ERR WIFI_PROMISCUOUS_BUSY
+ERR WIFI_WATCH_FAILED
+ERR USAGE WIFI PROMISCUOUS WATCH channel=<n> [duration_ms=<ms>] [rssi_min=<dbm>]
+```
+
+Notes:
+
+- `channel` is required.
+- `duration_ms` defaults to `5000`.
+- `rssi_min` defaults to `-95`.
+
+Example:
+
+```text
+WIFI PROMISC WATCH channel=6 duration_ms=3000
+WATCH channel=6 total=421 mgmt=142 data=188 ctrl=79 misc=12 beacons=29 deauth=0 unique=34 max_rssi=-44 duration_ms=3000
+WATCH_DONE channel=6 duration_ms=3000
+```
+
+Usage for the subtree root:
+
+```text
+ERR USAGE WIFI PROMISCUOUS <ENTER|EXIT|SURVEY|WATCH>
 ```
 
 ### `WIFI DISCONNECT`
@@ -464,7 +595,8 @@ ERR QUERY_NOT_IMPLEMENTED
 - There is no `HELP` command.
 - Named `key=value` arguments support optional double-quoted values.
 - The firmware suppresses ESP log output, so UART traffic should mostly contain only command responses.
-- Wi-Fi mode is station-only.
+- The firmware now reports Wi-Fi as a top-level `mode` plus a current `action`.
+- Connected-mode commands and promiscuous-mode commands are routed through separate Wi-Fi sub-handlers.
 - `WIFI DISCOVER` currently targets the connected IPv4 subnet and is optimized for typical `/24` home LANs.
 - This interface is request/response text, not a framed binary protocol.
 
@@ -475,7 +607,7 @@ READY
 PING
 PONG
 WIFI STATUS
-WIFI STATUS state=IDLE connected=no ssid=- reason=0
+WIFI STATUS mode=IDLE action=NONE state=IDLE connected=no ssid=- reason=0
 WIFI SCAN
 SCAN_COUNT 2
 AP MyAP RSSI -61 AUTH WPA2 CH 6
@@ -484,5 +616,5 @@ SCAN_DONE
 WIFI CONNECT ssid=MyAP psw=secret123
 WIFI CONNECTING
 WIFI STATUS
-WIFI STATUS state=CONNECTED connected=yes ssid=MyAP reason=0
+WIFI STATUS mode=CONNECTED action=NONE state=CONNECTED connected=yes ssid=MyAP reason=0
 ```

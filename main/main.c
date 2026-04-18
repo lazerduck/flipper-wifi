@@ -87,7 +87,7 @@ static void process_command_buffer(char *command_buffer)
 	command_router_dispatch(command_buffer, &command_context);
 }
 
-static void app_status_led_wifi_state_changed(wifi_manager_state_t state, void *context)
+static void app_status_led_wifi_state_changed(const wifi_manager_status_t *status, void *context)
 {
 	(void)context;
 
@@ -95,7 +95,7 @@ static void app_status_led_wifi_state_changed(wifi_manager_state_t state, void *
 		return;
 	}
 
-	status_led_apply_wifi_state(state);
+	status_led_apply_wifi_status(status);
 }
 
 void app_main(void)
@@ -111,7 +111,7 @@ void app_main(void)
 
 	led_err = status_led_init();
 	if (led_err == ESP_OK) {
-		wifi_manager_set_state_callback(app_status_led_wifi_state_changed, NULL);
+		wifi_manager_set_status_callback(app_status_led_wifi_state_changed, NULL);
 	}
 
 	ESP_ERROR_CHECK(command_uart_init());
