@@ -1,6 +1,7 @@
 #include "modules/wifi/connected/wifi_discovery.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -11,18 +12,23 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_netif_net_stack.h"
 #include "esp_netif_ip_addr.h"
 #include "esp_timer.h"
 
+#include "lwip/etharp.h"
 #include "lwip/icmp.h"
 #include "lwip/inet_chksum.h"
 #include "lwip/ip.h"
+#include "lwip/netif.h"
 #include "lwip/sockets.h"
+#include "lwip/tcpip.h"
 
 #define WIFI_DISCOVERY_IFKEY "WIFI_STA_DEF"
 #define WIFI_DISCOVERY_MAX_PARALLEL_PINGS 4
 #define WIFI_DISCOVERY_MAX_HOSTS 254U
 #define WIFI_DISCOVERY_LINE_MAX_LENGTH 256
+#define WIFI_DISCOVERY_SERVICE_TIMEOUT_MS 75U
 #define WIFI_DISCOVERY_PING_TIMEOUT_MS 250U
 #define WIFI_DISCOVERY_PING_DATA_SIZE 16U
 #define WIFI_DISCOVERY_RECV_BUFFER_SIZE 96U
@@ -30,12 +36,65 @@
 static const char *WIFI_DISCOVERY_TAG = "wifi_discovery";
 
 typedef struct {
+    uint8_t oui[3];
+    const char *label;
+} wifi_discovery_vendor_entry_t;
+
+typedef struct {
+    uint16_t port;
+    uint8_t bit;
+    const char *label;
+} wifi_discovery_service_entry_t;
+
+enum {
+    WIFI_DISCOVERY_SERVICE_HTTP  = 1U << 0,
+    WIFI_DISCOVERY_SERVICE_HTTPS = 1U << 1,
+    WIFI_DISCOVERY_SERVICE_SSH   = 1U << 2,
+    WIFI_DISCOVERY_SERVICE_DNS   = 1U << 3,
+    WIFI_DISCOVERY_SERVICE_SMB   = 1U << 4,
+    WIFI_DISCOVERY_SERVICE_RTSP  = 1U << 5,
+};
+
+typedef struct {
     uint32_t host_ip;
     uint16_t sequence_number;
     int64_t sent_at_us;
     uint32_t round_trip_ms;
+    uint8_t mac[6];
+    const char *vendor;
+    uint8_t service_mask;
+    const char *role;
+    char services[24];
+    bool has_mac;
     bool responded;
 } wifi_discovery_target_t;
+
+static const wifi_discovery_vendor_entry_t s_wifi_discovery_vendor_table[] = {
+    { .oui = { 0x24, 0x0A, 0xC4 }, .label = "Espressif" },
+    { .oui = { 0x7C, 0xDF, 0xA1 }, .label = "Espressif" },
+    { .oui = { 0x84, 0xF7, 0x03 }, .label = "Espressif" },
+    { .oui = { 0xB8, 0x27, 0xEB }, .label = "RaspberryPi" },
+    { .oui = { 0xDC, 0xA6, 0x32 }, .label = "RaspberryPi" },
+    { .oui = { 0x24, 0xA4, 0x3C }, .label = "Ubiquiti" },
+    { .oui = { 0x68, 0x72, 0x51 }, .label = "Ubiquiti" },
+    { .oui = { 0x50, 0xC7, 0xBF }, .label = "TPLink" },
+    { .oui = { 0x60, 0xE3, 0x27 }, .label = "TPLink" },
+    { .oui = { 0xD8, 0x96, 0x95 }, .label = "Apple" },
+    { .oui = { 0x44, 0x65, 0x0D }, .label = "Amazon" },
+    { .oui = { 0xF4, 0xF5, 0xD8 }, .label = "Google" },
+    { .oui = { 0x3C, 0x52, 0x82 }, .label = "Intel" },
+    { .oui = { 0xAC, 0x5A, 0x14 }, .label = "Samsung" },
+    { .oui = { 0x10, 0x60, 0x4B }, .label = "HP" },
+};
+
+static const wifi_discovery_service_entry_t s_wifi_discovery_service_table[] = {
+    { .port = 80U, .bit = WIFI_DISCOVERY_SERVICE_HTTP, .label = "WEB" },
+    { .port = 443U, .bit = WIFI_DISCOVERY_SERVICE_HTTPS, .label = "TLS" },
+    { .port = 22U, .bit = WIFI_DISCOVERY_SERVICE_SSH, .label = "SSH" },
+    { .port = 53U, .bit = WIFI_DISCOVERY_SERVICE_DNS, .label = "DNS" },
+    { .port = 445U, .bit = WIFI_DISCOVERY_SERVICE_SMB, .label = "SMB" },
+    { .port = 554U, .bit = WIFI_DISCOVERY_SERVICE_RTSP, .label = "RTSP" },
+};
 
 static portMUX_TYPE s_discovery_guard = portMUX_INITIALIZER_UNLOCKED;
 static bool s_discovery_in_progress = false;
@@ -107,10 +166,12 @@ static void wifi_discovery_write_network_line(
     uint32_t network_ip,
     uint32_t prefix_length,
     uint32_t self_ip,
+    uint32_t gateway_ip,
     uint32_t host_count)
 {
     char network_string[16];
     char self_string[16];
+    char gateway_string[16];
     char line[WIFI_DISCOVERY_LINE_MAX_LENGTH];
 
     if (write_line == NULL) {
@@ -119,16 +180,188 @@ static void wifi_discovery_write_network_line(
 
     wifi_discovery_format_ipv4(network_ip, network_string, sizeof(network_string));
     wifi_discovery_format_ipv4(self_ip, self_string, sizeof(self_string));
+    wifi_discovery_format_ipv4(gateway_ip, gateway_string, sizeof(gateway_string));
 
     snprintf(
         line,
         sizeof(line),
-        "DISCOVER_NETWORK subnet=%s/%u self=%s hosts=%u\n",
+        "DISCOVER_NETWORK subnet=%s/%u self=%s gw=%s hosts=%u\n",
         network_string,
         (unsigned int)prefix_length,
         self_string,
+        gateway_string,
         (unsigned int)host_count);
     write_line(line, context);
+}
+
+static const char *wifi_discovery_lookup_vendor(const uint8_t mac[6])
+{
+    if (mac == NULL) {
+        return NULL;
+    }
+
+    for (size_t index = 0; index < sizeof(s_wifi_discovery_vendor_table) / sizeof(s_wifi_discovery_vendor_table[0]); ++index) {
+        const wifi_discovery_vendor_entry_t *entry = &s_wifi_discovery_vendor_table[index];
+
+        if (memcmp(entry->oui, mac, sizeof(entry->oui)) == 0) {
+            return entry->label;
+        }
+    }
+
+    return NULL;
+}
+
+static bool wifi_discovery_probe_tcp_port(uint32_t host_ip, uint16_t port)
+{
+    int socket_fd;
+    int connect_result;
+    int socket_error = 0;
+    socklen_t socket_error_size = sizeof(socket_error);
+    struct sockaddr_in address;
+    struct timeval timeout = {
+        .tv_sec = 0,
+        .tv_usec = WIFI_DISCOVERY_SERVICE_TIMEOUT_MS * 1000U,
+    };
+    fd_set write_fds;
+    fd_set error_fds;
+    bool is_open = false;
+
+    socket_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (socket_fd < 0) {
+        return false;
+    }
+
+    if (fcntl(socket_fd, F_SETFL, O_NONBLOCK) != 0) {
+        close(socket_fd);
+        return false;
+    }
+
+    memset(&address, 0, sizeof(address));
+    address.sin_family = AF_INET;
+    address.sin_port = htons(port);
+    address.sin_addr.s_addr = esp_netif_htonl(host_ip);
+
+    connect_result = connect(socket_fd, (const struct sockaddr *)&address, sizeof(address));
+    if (connect_result == 0) {
+        is_open = true;
+        goto cleanup;
+    }
+
+    if (errno != EINPROGRESS && errno != EWOULDBLOCK) {
+        goto cleanup;
+    }
+
+    FD_ZERO(&write_fds);
+    FD_ZERO(&error_fds);
+    FD_SET(socket_fd, &write_fds);
+    FD_SET(socket_fd, &error_fds);
+
+    if (select(socket_fd + 1, NULL, &write_fds, &error_fds, &timeout) > 0 &&
+        getsockopt(socket_fd, SOL_SOCKET, SO_ERROR, &socket_error, &socket_error_size) == 0 &&
+        socket_error == 0) {
+        is_open = true;
+    }
+
+cleanup:
+    close(socket_fd);
+    return is_open;
+}
+
+static void wifi_discovery_probe_services(wifi_discovery_target_t *target)
+{
+    if (target == NULL) {
+        return;
+    }
+
+    target->service_mask = 0U;
+    target->services[0] = '\0';
+
+    for (size_t index = 0; index < sizeof(s_wifi_discovery_service_table) / sizeof(s_wifi_discovery_service_table[0]); ++index) {
+        const wifi_discovery_service_entry_t *entry = &s_wifi_discovery_service_table[index];
+
+        if (wifi_discovery_probe_tcp_port(target->host_ip, entry->port)) {
+            size_t used = strlen(target->services);
+
+            target->service_mask |= entry->bit;
+            if (used + strlen(entry->label) + 2U < sizeof(target->services)) {
+                if (used > 0U) {
+                    target->services[used++] = '+';
+                    target->services[used] = '\0';
+                }
+
+                strncat(target->services, entry->label, sizeof(target->services) - strlen(target->services) - 1U);
+            }
+        }
+    }
+}
+
+static const char *wifi_discovery_infer_role(const wifi_discovery_target_t *target)
+{
+    if (target == NULL) {
+        return NULL;
+    }
+
+    if ((target->service_mask & WIFI_DISCOVERY_SERVICE_SMB) != 0U &&
+        (target->service_mask & (WIFI_DISCOVERY_SERVICE_HTTP | WIFI_DISCOVERY_SERVICE_HTTPS)) != 0U) {
+        return "NAS";
+    }
+
+    if ((target->service_mask & WIFI_DISCOVERY_SERVICE_RTSP) != 0U) {
+        return "CAM";
+    }
+
+    if ((target->service_mask & WIFI_DISCOVERY_SERVICE_DNS) != 0U) {
+        return "DNS";
+    }
+
+    if ((target->service_mask & WIFI_DISCOVERY_SERVICE_SSH) != 0U) {
+        return "SSH";
+    }
+
+    if ((target->service_mask & (WIFI_DISCOVERY_SERVICE_HTTP | WIFI_DISCOVERY_SERVICE_HTTPS)) != 0U) {
+        return "WEB";
+    }
+
+    return NULL;
+}
+
+static bool wifi_discovery_lookup_arp_entry(
+    esp_netif_t *station_netif,
+    uint32_t host_ip,
+    uint8_t mac[6],
+    const char **vendor)
+{
+    struct netif *lwip_netif;
+    struct eth_addr *eth_address = NULL;
+    const ip4_addr_t *resolved_ip = NULL;
+    ip4_addr_t lookup_ip;
+    bool found = false;
+
+    if (station_netif == NULL || mac == NULL) {
+        return false;
+    }
+
+    lwip_netif = (struct netif *)esp_netif_get_netif_impl(station_netif);
+    if (lwip_netif == NULL) {
+        return false;
+    }
+
+    memset(mac, 0, 6U);
+    lookup_ip.addr = esp_netif_htonl(host_ip);
+
+    LOCK_TCPIP_CORE();
+    if (etharp_find_addr(lwip_netif, &lookup_ip, &eth_address, &resolved_ip) >= 0 &&
+        eth_address != NULL && resolved_ip != NULL) {
+        memcpy(mac, eth_address->addr, 6U);
+        found = true;
+    }
+    UNLOCK_TCPIP_CORE();
+
+    if (found && vendor != NULL) {
+        *vendor = wifi_discovery_lookup_vendor(mac);
+    }
+
+    return found;
 }
 
 static void wifi_discovery_write_progress_line(
@@ -164,6 +397,7 @@ static void wifi_discovery_write_found_line(
     const wifi_discovery_target_t *target)
 {
     char ip_string[16];
+    char mac_string[18];
     char line[WIFI_DISCOVERY_LINE_MAX_LENGTH];
 
     if (write_line == NULL || target == NULL) {
@@ -171,14 +405,32 @@ static void wifi_discovery_write_found_line(
     }
 
     wifi_discovery_format_ipv4(target->host_ip, ip_string, sizeof(ip_string));
+    if (target->has_mac) {
+        snprintf(
+            mac_string,
+            sizeof(mac_string),
+            "%02X:%02X:%02X:%02X:%02X:%02X",
+            target->mac[0],
+            target->mac[1],
+            target->mac[2],
+            target->mac[3],
+            target->mac[4],
+            target->mac[5]);
+    } else {
+        snprintf(mac_string, sizeof(mac_string), "-");
+    }
 
     snprintf(
         line,
         sizeof(line),
-        "DISCOVER_FOUND ip=%s host=%s source=%s rtt_ms=%u\n",
+        "DISCOVER_FOUND ip=%s host=%s source=%s mac=%s vendor=%s role=%s services=%s rtt_ms=%u\n",
         ip_string,
         "-",
         "none",
+        mac_string,
+        target->vendor != NULL ? target->vendor : "-",
+        target->role != NULL ? target->role : "-",
+        target->services[0] != '\0' ? target->services : "-",
         (unsigned int)target->round_trip_ms);
     write_line(line, context);
 }
@@ -371,6 +623,7 @@ esp_err_t wifi_discovery_scan_subnet(wifi_discovery_result_writer_t write_line, 
     uint32_t netmask;
     uint32_t network;
     uint32_t broadcast;
+    uint32_t gateway;
     uint32_t host_count;
     uint32_t prefix_length;
     uint32_t scanned_count = 0;
@@ -407,6 +660,7 @@ esp_err_t wifi_discovery_scan_subnet(wifi_discovery_result_writer_t write_line, 
 
     ip = esp_netif_htonl(ip_info.ip.addr);
     netmask = esp_netif_htonl(ip_info.netmask.addr);
+    gateway = esp_netif_htonl(ip_info.gw.addr);
     if (ip == 0U || !wifi_discovery_netmask_is_contiguous(netmask)) {
         ESP_LOGW(WIFI_DISCOVERY_TAG, "station IPv4 settings are not ready or netmask is invalid");
         result = ESP_ERR_INVALID_STATE;
@@ -440,7 +694,7 @@ esp_err_t wifi_discovery_scan_subnet(wifi_discovery_result_writer_t write_line, 
     ping_id = (uint16_t)(esp_timer_get_time() & 0xFFFFU);
 
     prefix_length = wifi_discovery_netmask_to_prefix(netmask);
-    wifi_discovery_write_network_line(write_line, context, network, prefix_length, ip, host_count);
+    wifi_discovery_write_network_line(write_line, context, network, prefix_length, ip, gateway, host_count);
 
     {
         char network_string[16];
@@ -489,6 +743,14 @@ esp_err_t wifi_discovery_scan_subnet(wifi_discovery_result_writer_t write_line, 
 
         for (size_t index = 0; index < batch_count; ++index) {
             if (targets[index].responded) {
+                targets[index].has_mac = wifi_discovery_lookup_arp_entry(
+                    station_netif, targets[index].host_ip, targets[index].mac, &targets[index].vendor);
+                wifi_discovery_probe_services(&targets[index]);
+                if (targets[index].host_ip == gateway) {
+                    targets[index].role = "GW";
+                } else {
+                    targets[index].role = wifi_discovery_infer_role(&targets[index]);
+                }
                 ++found_count;
                 wifi_discovery_write_found_line(write_line, context, &targets[index]);
             }

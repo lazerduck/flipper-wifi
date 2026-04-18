@@ -9,6 +9,9 @@
 #define FUSE_RADIO_SCAN_ERROR_SIZE 32U
 #define FUSE_RADIO_MAX_DISCOVER_HOSTS 20U
 #define FUSE_RADIO_DISCOVER_HOSTNAME_SIZE 48U
+#define FUSE_RADIO_DISCOVER_VENDOR_SIZE 20U
+#define FUSE_RADIO_DISCOVER_ROLE_SIZE 8U
+#define FUSE_RADIO_DISCOVER_SERVICES_SIZE 24U
 #define FUSE_RADIO_DISCOVER_SUBNET_SIZE 24U
 #define FUSE_RADIO_MAX_WATCH_DEVICES 12U
 #define FUSE_RADIO_MAX_SURVEY_CHANNELS 14U
@@ -75,9 +78,18 @@ typedef enum {
 typedef struct {
     char ip[16];
     char name[FUSE_RADIO_DISCOVER_HOSTNAME_SIZE];
+    char mac[18];
+    char vendor[FUSE_RADIO_DISCOVER_VENDOR_SIZE];
+    char role[FUSE_RADIO_DISCOVER_ROLE_SIZE];
+    char services[FUSE_RADIO_DISCOVER_SERVICES_SIZE];
     uint16_t rtt_ms;
     FuseRadioDiscoverNameSource name_source;
     bool has_name;
+    bool has_mac;
+    bool has_vendor;
+    bool has_role;
+    bool has_services;
+    bool is_gateway;
 } FuseRadioDiscoverHost;
 
 typedef struct {
@@ -91,6 +103,7 @@ typedef struct {
     uint32_t duration_ms;
     char subnet[FUSE_RADIO_DISCOVER_SUBNET_SIZE];
     char self_ip[16];
+    char gateway_ip[16];
     char current_ip[16];
     bool active;
     bool complete;

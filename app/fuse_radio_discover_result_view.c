@@ -30,6 +30,38 @@ static void fuse_radio_discover_result_view_draw_badge(
     canvas_set_color(canvas, ColorBlack);
 }
 
+static void fuse_radio_discover_result_view_copy_fit(
+    char* dst,
+    size_t dst_size,
+    const char* src,
+    size_t max_visible_chars) {
+    if(dst == NULL || dst_size == 0U) {
+        return;
+    }
+
+    dst[0] = '\0';
+    if(src == NULL || src[0] == '\0') {
+        return;
+    }
+
+    const size_t src_len = strlen(src);
+    size_t copy_len = src_len;
+    if(copy_len > max_visible_chars) {
+        copy_len = max_visible_chars;
+    }
+    if(copy_len >= dst_size) {
+        copy_len = dst_size - 1U;
+    }
+
+    memcpy(dst, src, copy_len);
+    dst[copy_len] = '\0';
+
+    if(copy_len < src_len && copy_len >= 2U) {
+        dst[copy_len - 2U] = '.';
+        dst[copy_len - 1U] = '.';
+    }
+}
+
 static const char* fuse_radio_discover_result_view_source_label(FuseRadioDiscoverNameSource source) {
     switch(source) {
     case FuseRadioDiscoverNameSourceMdns:
@@ -39,6 +71,136 @@ static const char* fuse_radio_discover_result_view_source_label(FuseRadioDiscove
     case FuseRadioDiscoverNameSourceNone:
     default:
         return "IP";
+    }
+}
+
+static const char* fuse_radio_discover_result_view_role_badge(const FuseRadioDiscoverHost* host) {
+    if(host->is_gateway) {
+        return "GW";
+    }
+
+    if(host->has_role) {
+        return host->role;
+    }
+
+    if(host->has_name) {
+        return host->name_source == FuseRadioDiscoverNameSourceMdns ? "mDNS" : "NAME";
+    }
+
+    if(host->has_vendor) {
+        return "OUI";
+    }
+
+    if(host->has_mac) {
+        return "ARP";
+    }
+
+    return "LIVE";
+}
+
+static void fuse_radio_discover_result_view_format_mac_tail(
+    const FuseRadioDiscoverHost* host,
+    char* buffer,
+    size_t buffer_size) {
+    if(buffer == NULL || buffer_size == 0U) {
+        return;
+    }
+
+    buffer[0] = '\0';
+    if(!host->has_mac) {
+        return;
+    }
+
+    const size_t mac_len = strlen(host->mac);
+    if(mac_len >= 8U) {
+        snprintf(buffer, buffer_size, "MAC %s", host->mac + mac_len - 8U);
+    } else {
+        snprintf(buffer, buffer_size, "MAC %s", host->mac);
+    }
+}
+
+static void fuse_radio_discover_result_view_format_latency(
+    const FuseRadioDiscoverHost* host,
+    char* buffer,
+    size_t buffer_size) {
+    const char* quality = "slow";
+
+    if(buffer == NULL || buffer_size == 0U) {
+        return;
+    }
+
+    if(host->rtt_ms <= 4U) {
+        quality = "fast";
+    } else if(host->rtt_ms <= 12U) {
+        quality = "good";
+    } else if(host->rtt_ms <= 35U) {
+        quality = "ok";
+    }
+
+    snprintf(buffer, buffer_size, "%ums %s", (unsigned)host->rtt_ms, quality);
+}
+
+static void fuse_radio_discover_result_view_format_primary(
+    const FuseRadioDiscoverHost* host,
+    char* buffer,
+    size_t buffer_size) {
+    const char* primary = "Active host";
+
+    if(buffer == NULL || buffer_size == 0U) {
+        return;
+    }
+
+    if(host->is_gateway) {
+        primary = "Gateway";
+    } else if(host->has_name) {
+        primary = host->name;
+    } else if(host->has_role) {
+        if(strcmp(host->role, "WEB") == 0) {
+            primary = "Web service";
+        } else if(strcmp(host->role, "SSH") == 0) {
+            primary = "Remote shell";
+        } else if(strcmp(host->role, "DNS") == 0) {
+            primary = "Name server";
+        } else if(strcmp(host->role, "NAS") == 0) {
+            primary = "File share";
+        } else if(strcmp(host->role, "CAM") == 0) {
+            primary = "Camera stream";
+        } else {
+            primary = host->role;
+        }
+    } else if(host->has_vendor) {
+        primary = host->vendor;
+    } else if(host->has_mac) {
+        primary = "ARP responder";
+    }
+
+    fuse_radio_discover_result_view_copy_fit(buffer, buffer_size, primary, 15U);
+}
+
+static void fuse_radio_discover_result_view_format_secondary(
+    const FuseRadioDiscoverHost* host,
+    char* buffer,
+    size_t buffer_size) {
+    char mac_tail[16];
+
+    if(buffer == NULL || buffer_size == 0U) {
+        return;
+    }
+
+    fuse_radio_discover_result_view_format_mac_tail(host, mac_tail, sizeof(mac_tail));
+
+    if(host->is_gateway && host->has_vendor) {
+        fuse_radio_discover_result_view_copy_fit(buffer, buffer_size, host->vendor, 12U);
+    } else if(host->has_services) {
+        fuse_radio_discover_result_view_copy_fit(buffer, buffer_size, host->services, 14U);
+    } else if(host->has_name && host->has_vendor) {
+        fuse_radio_discover_result_view_copy_fit(buffer, buffer_size, host->vendor, 12U);
+    } else if(host->has_mac) {
+        fuse_radio_discover_result_view_copy_fit(buffer, buffer_size, mac_tail, 12U);
+    } else if(host->has_name) {
+        snprintf(buffer, buffer_size, "%s name", fuse_radio_discover_result_view_source_label(host->name_source));
+    } else {
+        snprintf(buffer, buffer_size, "ICMP reply");
     }
 }
 
@@ -62,6 +224,9 @@ static void fuse_radio_discover_result_view_draw_overview(
     if(results->truncated_count > 0U) {
         snprintf(line, sizeof(line), "+%u hidden", (unsigned)results->truncated_count);
         canvas_draw_str(canvas, 70, 50, line);
+    } else if(results->gateway_ip[0]) {
+        snprintf(line, sizeof(line), "GW %s", results->gateway_ip);
+        canvas_draw_str(canvas, 56, 50, line);
     } else if(results->self_ip[0]) {
         snprintf(line, sizeof(line), "Self %s", results->self_ip);
         canvas_draw_str(canvas, 54, 50, line);
@@ -71,18 +236,27 @@ static void fuse_radio_discover_result_view_draw_overview(
 static void fuse_radio_discover_result_view_draw_host(
     Canvas* canvas,
     const FuseRadioDiscoverHost* host) {
-    char line[28];
+    char primary[20];
+    char secondary[20];
+    char latency[16];
 
     canvas_draw_frame(canvas, 3, 17, 122, 38);
     canvas_set_font(canvas, FontPrimary);
     canvas_draw_str(canvas, 8, 28, host->ip);
+
     fuse_radio_discover_result_view_draw_badge(
-        canvas, 98, 19, fuse_radio_discover_result_view_source_label(host->name_source));
+        canvas, 98, 19, fuse_radio_discover_result_view_role_badge(host));
+
+    fuse_radio_discover_result_view_format_primary(host, primary, sizeof(primary));
+    fuse_radio_discover_result_view_format_secondary(host, secondary, sizeof(secondary));
+    fuse_radio_discover_result_view_format_latency(host, latency, sizeof(latency));
 
     canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 8, 39, host->has_name ? host->name : "No hostname");
-    snprintf(line, sizeof(line), "RTT %ums", (unsigned)host->rtt_ms);
-    canvas_draw_str(canvas, 8, 50, line);
+    canvas_draw_str(canvas, 8, 39, primary);
+    canvas_draw_str(canvas, 8, 50, secondary);
+
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str(canvas, 82, 50, latency);
 }
 
 static void fuse_radio_discover_result_view_draw_callback(Canvas* canvas, void* model) {

@@ -501,10 +501,10 @@ WIFI DISCOVER
 Successful response format:
 
 ```text
-DISCOVER_NETWORK subnet=<network>/<prefix> self=<local_ip> hosts=<usable_host_count>
+DISCOVER_NETWORK subnet=<network>/<prefix> self=<local_ip> gw=<gateway_ip> hosts=<usable_host_count>
 DISCOVER_PROGRESS scanned=<count> total=<usable_host_count> found=<count> current=<last_ip_in_batch>
-DISCOVER_FOUND ip=<ip> host=<hostname|-> source=<none|mdns|rdns> rtt_ms=<round_trip_ms>
-DISCOVER_FOUND ip=<ip> host=<hostname|-> source=<none|mdns|rdns> rtt_ms=<round_trip_ms>
+DISCOVER_FOUND ip=<ip> host=<hostname|-> source=<none|mdns|rdns> mac=<mac|-> vendor=<label|-> role=<GW|WEB|SSH|DNS|NAS|CAM|-> services=<token[+token...]|-> rtt_ms=<round_trip_ms>
+DISCOVER_FOUND ip=<ip> host=<hostname|-> source=<none|mdns|rdns> mac=<mac|-> vendor=<label|-> role=<GW|WEB|SSH|DNS|NAS|CAM|-> services=<token[+token...]|-> rtt_ms=<round_trip_ms>
 ...
 DISCOVER_DONE scanned=<count> found=<count> duration_ms=<total_ms>
 ```
@@ -516,7 +516,13 @@ Notes:
 - The current implementation probes up to 4 hosts in parallel per batch to stay within typical ESP-IDF socket limits.
 - Progress is streamed once per ping batch so a client can show a determinate progress bar while discovery is running.
 - Results are streamed only for hosts that respond to the ping.
+- The `gw` field reports the current station gateway so clients can badge likely infrastructure devices.
+- The firmware attempts to read each responding host from the station ARP cache and emits `mac=` when available.
+- `vendor=` is a lightweight built-in OUI hint derived from the MAC prefix when it matches one of the bundled prefixes; otherwise it is `-`.
+- `services=` is a compact summary of short TCP probes against a small fixed port set. Tokens currently include `WEB`, `TLS`, `SSH`, `DNS`, `SMB`, and `RTSP`.
+- `role=` is an inferred card hint derived from the service probe result. It is emitted as `-` when the probe set does not strongly suggest a role.
 - The `source` field is reserved for hostname enrichment. In the current firmware build it is emitted as `none` for all results.
+- Service probes run only after a host answers ICMP and use short nonblocking TCP timeouts to keep the scan responsive.
 - The current implementation supports subnets with at most 254 usable host addresses. Larger subnets return an error.
 
 If Wi-Fi is not connected with an IP address:
@@ -550,12 +556,12 @@ Example:
 
 ```text
 WIFI DISCOVER
-DISCOVER_NETWORK subnet=192.168.1.0/24 self=192.168.1.42 hosts=253
+DISCOVER_NETWORK subnet=192.168.1.0/24 self=192.168.1.42 gw=192.168.1.1 hosts=253
 DISCOVER_PROGRESS scanned=4 total=253 found=1 current=192.168.1.4
-DISCOVER_FOUND ip=192.168.1.1 host=- source=none rtt_ms=2
+DISCOVER_FOUND ip=192.168.1.1 host=- source=none mac=74:83:C2:12:34:56 vendor=- role=DNS services=WEB+TLS+DNS rtt_ms=2
 DISCOVER_PROGRESS scanned=8 total=253 found=2 current=192.168.1.8
-DISCOVER_FOUND ip=192.168.1.44 host=- source=none rtt_ms=6
-DISCOVER_FOUND ip=192.168.1.87 host=- source=none rtt_ms=14
+DISCOVER_FOUND ip=192.168.1.44 host=- source=none mac=24:0A:C4:AA:BB:CC vendor=Espressif role=WEB services=WEB rtt_ms=6
+DISCOVER_FOUND ip=192.168.1.87 host=- source=none mac=- vendor=- role=SSH services=SSH rtt_ms=14
 DISCOVER_DONE scanned=253 found=3 duration_ms=5412
 ```
 

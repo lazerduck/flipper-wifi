@@ -1320,6 +1320,7 @@ static void fuse_radio_app_parse_http_line(FuseRadioApp* app, const char* line) 
 static void fuse_radio_app_parse_discover_network_line(FuseRadioApp* app, const char* line) {
     const char* subnet = strstr(line, "subnet=");
     const char* self = strstr(line, " self=");
+    const char* gateway = strstr(line, " gw=");
     const char* hosts = strstr(line, " hosts=");
 
     if(!subnet || !self) {
@@ -1331,19 +1332,34 @@ static void fuse_radio_app_parse_discover_network_line(FuseRadioApp* app, const 
 
     char subnet_text[FUSE_RADIO_DISCOVER_SUBNET_SIZE] = {0};
     char self_text[sizeof(app->discover_results.self_ip)] = {0};
+    char gateway_text[sizeof(app->discover_results.gateway_ip)] = {0};
     size_t subnet_len = (size_t)(strstr(subnet, " self=") - subnet);
-    size_t self_len = hosts ? (size_t)(hosts - self) : strcspn(self, " ");
+    size_t self_len = gateway ? (size_t)(gateway - self) : (hosts ? (size_t)(hosts - self) : strcspn(self, " "));
+    size_t gateway_len = 0U;
 
     if(subnet_len >= sizeof(subnet_text)) subnet_len = sizeof(subnet_text) - 1U;
     if(self_len >= sizeof(self_text)) self_len = sizeof(self_text) - 1U;
+    if(gateway && hosts) {
+        gateway_len = (size_t)(hosts - (gateway + 4));
+    } else if(gateway) {
+        gateway_len = strcspn(gateway + 4, " ");
+    }
+    if(gateway_len >= sizeof(gateway_text)) gateway_len = sizeof(gateway_text) - 1U;
 
     memcpy(subnet_text, subnet, subnet_len);
     memcpy(self_text, self, self_len);
+    if(gateway_len > 0U) {
+        memcpy(gateway_text, gateway + 4, gateway_len);
+    }
 
     fuse_radio_app_strlcpy(
         app->discover_results.subnet, subnet_text, sizeof(app->discover_results.subnet));
     fuse_radio_app_strlcpy(
         app->discover_results.self_ip, self_text, sizeof(app->discover_results.self_ip));
+    fuse_radio_app_strlcpy(
+        app->discover_results.gateway_ip,
+        gateway_text,
+        sizeof(app->discover_results.gateway_ip));
     if(hosts) {
         app->discover_results.total_hosts = (uint16_t)strtoul(hosts + 7, NULL, 10);
     }
@@ -1396,34 +1412,58 @@ static void fuse_radio_app_parse_discover_found_line(FuseRadioApp* app, const ch
     const char* ip = strstr(line, "ip=");
     const char* host = strstr(line, " host=");
     const char* source = strstr(line, " source=");
+    const char* mac = strstr(line, " mac=");
+    const char* vendor = strstr(line, " vendor=");
+    const char* role = strstr(line, " role=");
+    const char* services = strstr(line, " services=");
     const char* rtt = strstr(line, " rtt_ms=");
 
-    if(!ip || !host || !source || !rtt) {
+    if(!ip || !host || !source || !mac || !vendor || !role || !services || !rtt) {
         return;
     }
 
     ip += 3;
     host += 6;
     source += 8;
+    mac += 5;
+    vendor += 8;
+    role += 6;
+    services += 10;
     rtt += 8;
 
     char ip_text[16] = {0};
     char host_text[FUSE_RADIO_DISCOVER_HOSTNAME_SIZE] = {0};
     char source_text[16] = {0};
+    char mac_text[sizeof(((FuseRadioDiscoverHost*)0)->mac)] = {0};
+    char vendor_text[FUSE_RADIO_DISCOVER_VENDOR_SIZE] = {0};
+    char role_text[FUSE_RADIO_DISCOVER_ROLE_SIZE] = {0};
+    char services_text[FUSE_RADIO_DISCOVER_SERVICES_SIZE] = {0};
     char rtt_text[16] = {0};
     size_t ip_len = (size_t)(strstr(ip, " host=") - ip);
     size_t host_len = (size_t)(strstr(host, " source=") - host);
-    size_t source_len = (size_t)(strstr(source, " rtt_ms=") - source);
+    size_t source_len = (size_t)(strstr(source, " mac=") - source);
+    size_t mac_len = (size_t)(strstr(mac, " vendor=") - mac);
+    size_t vendor_len = (size_t)(strstr(vendor, " role=") - vendor);
+    size_t role_len = (size_t)(strstr(role, " services=") - role);
+    size_t services_len = (size_t)(strstr(services, " rtt_ms=") - services);
     size_t rtt_len = strcspn(rtt, " ");
 
     if(ip_len >= sizeof(ip_text)) ip_len = sizeof(ip_text) - 1U;
     if(host_len >= sizeof(host_text)) host_len = sizeof(host_text) - 1U;
     if(source_len >= sizeof(source_text)) source_len = sizeof(source_text) - 1U;
+    if(mac_len >= sizeof(mac_text)) mac_len = sizeof(mac_text) - 1U;
+    if(vendor_len >= sizeof(vendor_text)) vendor_len = sizeof(vendor_text) - 1U;
+    if(role_len >= sizeof(role_text)) role_len = sizeof(role_text) - 1U;
+    if(services_len >= sizeof(services_text)) services_len = sizeof(services_text) - 1U;
     if(rtt_len >= sizeof(rtt_text)) rtt_len = sizeof(rtt_text) - 1U;
 
     memcpy(ip_text, ip, ip_len);
     memcpy(host_text, host, host_len);
     memcpy(source_text, source, source_len);
+    memcpy(mac_text, mac, mac_len);
+    memcpy(vendor_text, vendor, vendor_len);
+    memcpy(role_text, role, role_len);
+    memcpy(services_text, services, services_len);
     memcpy(rtt_text, rtt, rtt_len);
 
     if(app->discover_results.count < FUSE_RADIO_MAX_DISCOVER_HOSTS) {
@@ -1436,6 +1476,29 @@ static void fuse_radio_app_parse_discover_found_line(FuseRadioApp* app, const ch
         if(discover_host->has_name) {
             fuse_radio_app_strlcpy(discover_host->name, host_text, sizeof(discover_host->name));
         }
+        discover_host->has_mac = strcmp(mac_text, "-") != 0;
+        if(discover_host->has_mac) {
+            fuse_radio_app_strlcpy(discover_host->mac, mac_text, sizeof(discover_host->mac));
+        }
+        discover_host->has_vendor = strcmp(vendor_text, "-") != 0;
+        if(discover_host->has_vendor) {
+            fuse_radio_app_strlcpy(
+                discover_host->vendor, vendor_text, sizeof(discover_host->vendor));
+        }
+        discover_host->has_role = strcmp(role_text, "-") != 0;
+        if(discover_host->has_role) {
+            fuse_radio_app_strlcpy(discover_host->role, role_text, sizeof(discover_host->role));
+        }
+        discover_host->has_services = strcmp(services_text, "-") != 0;
+        if(discover_host->has_services) {
+            fuse_radio_app_strlcpy(
+                discover_host->services,
+                services_text,
+                sizeof(discover_host->services));
+        }
+        discover_host->is_gateway =
+            app->discover_results.gateway_ip[0] != '\0' &&
+            strcmp(discover_host->ip, app->discover_results.gateway_ip) == 0;
 
         if(strcmp(source_text, "mdns") == 0) {
             discover_host->name_source = FuseRadioDiscoverNameSourceMdns;
