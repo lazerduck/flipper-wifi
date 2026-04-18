@@ -32,3 +32,4 @@ void fuse_radio_scan_view_set_data(
     FuseRadioScanView* instance,
     const FuseRadioScanResults* results,
     FuseRadioWifiState wifi_state);
+void fuse_radio_scan_view_advance_animation(FuseRadioScanView* instance);

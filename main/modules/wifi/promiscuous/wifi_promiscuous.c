@@ -270,7 +270,7 @@ esp_err_t wifi_promiscuous_survey(
     wifi_promiscuous_result_writer_t write_line,
     void *context)
 {
-    wifi_promiscuous_stats_t stats[WIFI_PROMISCUOUS_MAX_CHANNELS];
+    wifi_promiscuous_stats_t stats;
     uint32_t duration_ms;
     uint8_t recommended_channel = 0U;
     uint32_t recommended_total = UINT32_MAX;
@@ -284,15 +284,15 @@ esp_err_t wifi_promiscuous_survey(
         return ESP_ERR_INVALID_ARG;
     }
 
-    memset(stats, 0, sizeof(stats));
+    memset(&stats, 0, sizeof(stats));
     started_at_us = esp_timer_get_time();
 
     for (index = 0; index < config->channel_count; ++index) {
-        wifi_promiscuous_reset_stats(&stats[index], config->channels[index]);
+        wifi_promiscuous_reset_stats(&stats, config->channels[index]);
 
         err = wifi_promiscuous_begin_capture(
             WIFI_PROMISCUOUS_CAPTURE_SURVEY,
-            &stats[index],
+            &stats,
             config->rssi_min);
         if (err != ESP_OK) {
             return err;
@@ -307,14 +307,14 @@ esp_err_t wifi_promiscuous_survey(
         vTaskDelay(pdMS_TO_TICKS(config->dwell_ms));
         wifi_promiscuous_end_capture();
 
-        if (stats[index].total_frames < recommended_total) {
-            recommended_total = stats[index].total_frames;
-            recommended_channel = stats[index].channel;
+        if (stats.total_frames < recommended_total) {
+            recommended_total = stats.total_frames;
+            recommended_channel = stats.channel;
         }
 
         wifi_promiscuous_write_stats_line(
             "SURVEY",
-            &stats[index],
+            &stats,
             config->dwell_ms,
             write_line,
             context);

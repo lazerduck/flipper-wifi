@@ -17,6 +17,12 @@ bool fuse_radio_scene_wifi_status_on_event(void* context, SceneManagerEvent even
     FuseRadioApp* app = context;
 
     if(event.type == SceneManagerEventTypeCustom &&
+       event.event == FuseRadioCustomEventWifiConnectedReady) {
+        scene_manager_next_scene(app->scene_manager, FuseRadioSceneWifiConnectedMenu);
+        return true;
+    }
+
+    if(event.type == SceneManagerEventTypeCustom &&
        event.event == FuseRadioCustomEventWifiStatusRefresh) {
         fuse_radio_app_request_wifi_status(app);
         fuse_radio_app_refresh_wifi_info_widget(app);

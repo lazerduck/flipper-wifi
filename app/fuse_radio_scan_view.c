@@ -18,6 +18,7 @@ typedef struct {
     FuseRadioWifiState wifi_state;
     uint8_t selected_index;
     uint8_t channel_list_offset;
+    uint8_t animation_phase;
     bool show_channel_summary;
     FuseRadioScanViewMode mode;
 } FuseRadioScanViewModel;
@@ -29,6 +30,19 @@ typedef struct {
 
 #define FUSE_RADIO_CHANNEL_LINES      4U
 #define FUSE_RADIO_SSID_VISIBLE_CHARS 12U
+
+static const char* fuse_radio_scan_view_scanning_text(uint8_t phase) {
+    switch(phase & 0x03U) {
+    case 1U:
+        return "Scanning.";
+    case 2U:
+        return "Scanning..";
+    case 3U:
+        return "Scanning...";
+    default:
+        return "Scanning";
+    }
+}
 
 static const char*
     fuse_radio_scan_view_display_ssid(const FuseRadioAccessPoint* ap, char* buffer) {
@@ -121,7 +135,7 @@ static void fuse_radio_scan_view_draw_callback(Canvas* canvas, void* model) {
 
     canvas_set_font(canvas, FontSecondary);
     if(view_model->wifi_state == FuseRadioWifiStateScanning) {
-        canvas_draw_str(canvas, 80, 10, "Scanning");
+        canvas_draw_str(canvas, 68, 10, fuse_radio_scan_view_scanning_text(view_model->animation_phase));
     } else if(view_model->wifi_state == FuseRadioWifiStateScanComplete) {
         canvas_draw_str(canvas, 76, 10, "Results");
     } else if(view_model->wifi_state == FuseRadioWifiStateError) {
@@ -214,15 +228,13 @@ static void fuse_radio_scan_view_draw_callback(Canvas* canvas, void* model) {
     canvas_draw_str(canvas, 8, 28, fuse_radio_scan_view_display_ssid(ap, ssid));
 
     canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 8, 39, ap->auth);
+    char auth_line[24];
+    snprintf(auth_line, sizeof(auth_line), "%s  ch%u", ap->auth, (unsigned)ap->channel);
+    canvas_draw_str(canvas, 8, 39, auth_line);
 
-    char channel[12];
-    snprintf(channel, sizeof(channel), "CH %u", ap->channel);
-    canvas_draw_str(canvas, 8, 50, channel);
-
-    char rssi[14];
+    char rssi[20];
     snprintf(rssi, sizeof(rssi), "%d dBm", ap->rssi);
-    canvas_draw_str(canvas, 66, 50, rssi);
+    canvas_draw_str(canvas, 8, 50, rssi);
     fuse_radio_scan_view_draw_signal(canvas, ap->rssi);
 
     char counter[18];
@@ -390,6 +402,20 @@ void fuse_radio_scan_view_set_data(
                 model->channel_list_offset = 0U;
             } else if(model->channel_list_offset + FUSE_RADIO_CHANNEL_LINES > channel_count) {
                 model->channel_list_offset = channel_count - FUSE_RADIO_CHANNEL_LINES;
+            }
+        },
+        true);
+}
+
+void fuse_radio_scan_view_advance_animation(FuseRadioScanView* instance) {
+    furi_assert(instance);
+
+    with_view_model(
+        instance->view,
+        FuseRadioScanViewModel * model,
+        {
+            if(model->wifi_state == FuseRadioWifiStateScanning) {
+                model->animation_phase = (uint8_t)((model->animation_phase + 1U) & 0x03U);
             }
         },
         true);

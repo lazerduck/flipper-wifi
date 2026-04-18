@@ -22,6 +22,27 @@ typedef enum {
     FuseRadioWifiStateError,
 } FuseRadioWifiState;
 
+typedef enum {
+    FuseRadioWifiModeUnknown,
+    FuseRadioWifiModeIdle,
+    FuseRadioWifiModeConnected,
+    FuseRadioWifiModePromiscuous,
+} FuseRadioWifiMode;
+
+typedef enum {
+    FuseRadioWifiActionUnknown,
+    FuseRadioWifiActionNone,
+    FuseRadioWifiActionScanning,
+    FuseRadioWifiActionConnecting,
+    FuseRadioWifiActionDisconnecting,
+    FuseRadioWifiActionDiscovering,
+    FuseRadioWifiActionResolvingMdns,
+    FuseRadioWifiActionEnteringPromiscuous,
+    FuseRadioWifiActionExitingPromiscuous,
+    FuseRadioWifiActionSurveying,
+    FuseRadioWifiActionWatching,
+} FuseRadioWifiAction;
+
 typedef struct {
     char ssid[FUSE_RADIO_MAX_SSID_LENGTH + 1U];
     char auth[FUSE_RADIO_MAX_AUTH_LENGTH + 1U];
