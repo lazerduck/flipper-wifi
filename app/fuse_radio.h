@@ -7,6 +7,9 @@
 #define FUSE_RADIO_MAX_SSID_LENGTH 32U
 #define FUSE_RADIO_MAX_AUTH_LENGTH 15U
 #define FUSE_RADIO_SCAN_ERROR_SIZE 32U
+#define FUSE_RADIO_MAX_DISCOVER_HOSTS 20U
+#define FUSE_RADIO_DISCOVER_HOSTNAME_SIZE 48U
+#define FUSE_RADIO_DISCOVER_SUBNET_SIZE 24U
 #define FUSE_RADIO_MAX_WATCH_DEVICES 12U
 #define FUSE_RADIO_MAX_SURVEY_CHANNELS 14U
 
@@ -62,6 +65,38 @@ typedef struct {
     bool has_error;
     char error[FUSE_RADIO_SCAN_ERROR_SIZE];
 } FuseRadioScanResults;
+
+typedef enum {
+    FuseRadioDiscoverNameSourceNone,
+    FuseRadioDiscoverNameSourceMdns,
+    FuseRadioDiscoverNameSourceReverseDns,
+} FuseRadioDiscoverNameSource;
+
+typedef struct {
+    char ip[16];
+    char name[FUSE_RADIO_DISCOVER_HOSTNAME_SIZE];
+    uint16_t rtt_ms;
+    FuseRadioDiscoverNameSource name_source;
+    bool has_name;
+} FuseRadioDiscoverHost;
+
+typedef struct {
+    FuseRadioDiscoverHost hosts[FUSE_RADIO_MAX_DISCOVER_HOSTS];
+    uint8_t count;
+    uint16_t total_hosts;
+    uint16_t scanned_count;
+    uint16_t found_count;
+    uint16_t truncated_count;
+    uint8_t progress_percent;
+    uint32_t duration_ms;
+    char subnet[FUSE_RADIO_DISCOVER_SUBNET_SIZE];
+    char self_ip[16];
+    char current_ip[16];
+    bool active;
+    bool complete;
+    bool has_error;
+    char error[FUSE_RADIO_SCAN_ERROR_SIZE];
+} FuseRadioDiscoverResults;
 
 typedef struct {
     char mac[18];

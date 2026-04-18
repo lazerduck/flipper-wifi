@@ -82,7 +82,7 @@ bool fuse_radio_scene_wifi_connected_menu_on_event(void* context, SceneManagerEv
         if(event.event == FuseRadioWifiConnectedMenuIndexDisconnect) {
             return fuse_radio_scene_wifi_connected_menu_leave_branch(app);
         } else if(event.event == FuseRadioWifiConnectedMenuIndexDiscover) {
-            scene_manager_next_scene(app->scene_manager, FuseRadioSceneWifiDiscoverResult);
+            scene_manager_next_scene(app->scene_manager, FuseRadioSceneWifiDiscoverProgress);
         } else if(event.event == FuseRadioWifiConnectedMenuIndexHttpIp) {
             app->http_preset = FuseRadioHttpPresetPublicIp;
             scene_manager_next_scene(app->scene_manager, FuseRadioSceneWifiHttpResult);

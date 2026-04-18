@@ -273,6 +273,17 @@ static void fuse_radio_app_survey_result_view_callback(
     }
 }
 
+static void fuse_radio_app_discover_result_view_callback(
+    FuseRadioDiscoverResultViewAction action,
+    void* context) {
+    FuseRadioApp* app = context;
+
+    if(action == FuseRadioDiscoverResultViewActionRepeat) {
+        view_dispatcher_send_custom_event(
+            app->view_dispatcher, FuseRadioCustomEventWifiDiscoverRefresh);
+    }
+}
+
 static void fuse_radio_app_watch_channel_callback(uint8_t channel, void* context) {
     FuseRadioApp* app = context;
     app->promiscuous_watch_channel = channel;
@@ -366,18 +377,6 @@ static void fuse_radio_app_wifi_http_button_callback(
     if(button == GuiButtonTypeCenter && type == InputTypeShort) {
         view_dispatcher_send_custom_event(
             app->view_dispatcher, FuseRadioCustomEventWifiHttpRefresh);
-    }
-}
-
-static void fuse_radio_app_wifi_discover_button_callback(
-    GuiButtonType button,
-    InputType type,
-    void* context) {
-    FuseRadioApp* app = context;
-
-    if(button == GuiButtonTypeCenter && type == InputTypeShort) {
-        view_dispatcher_send_custom_event(
-            app->view_dispatcher, FuseRadioCustomEventWifiDiscoverRefresh);
     }
 }
 
@@ -521,10 +520,7 @@ static void fuse_radio_app_refresh_survey_result_view(FuseRadioApp* app) {
 }
 
 static void fuse_radio_app_reset_discover_results(FuseRadioApp* app) {
-    app->discover_info_text[0] = '\0';
-    app->discover_scanned_count = 0U;
-    app->discover_found_count = 0U;
-    app->discover_duration_ms = 0U;
+    memset(&app->discover_results, 0, sizeof(app->discover_results));
     app->discover_dirty = true;
 }
 
@@ -574,17 +570,26 @@ static void fuse_radio_app_append_http_text(FuseRadioApp* app, const char* fmt, 
     app->http_dirty = true;
 }
 
-static void fuse_radio_app_append_discover_text(FuseRadioApp* app, const char* fmt, ...) {
-    const size_t used = strlen(app->discover_info_text);
-    if(used >= sizeof(app->discover_info_text) - 1U) {
-        return;
-    }
+static void fuse_radio_app_refresh_discover_progress_view(FuseRadioApp* app) {
+    FuseRadioDiscoverProgressSnapshot snapshot = {
+        .scanned_count = app->discover_results.scanned_count,
+        .total_count = app->discover_results.total_hosts,
+        .found_count = app->discover_results.found_count,
+        .progress_percent = app->discover_results.progress_percent,
+        .animation_frame = 0U,
+    };
 
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(app->discover_info_text + used, sizeof(app->discover_info_text) - used, fmt, args);
-    va_end(args);
-    app->discover_dirty = true;
+    fuse_radio_app_strlcpy(
+        snapshot.subnet, app->discover_results.subnet, sizeof(snapshot.subnet));
+    fuse_radio_app_strlcpy(
+        snapshot.current_ip, app->discover_results.current_ip, sizeof(snapshot.current_ip));
+    fuse_radio_discover_progress_view_set_snapshot(app->discover_progress_view, &snapshot);
+    app->discover_dirty = false;
+}
+
+static void fuse_radio_app_refresh_discover_result_view(FuseRadioApp* app) {
+    fuse_radio_discover_result_view_set_data(app->discover_result_view, &app->discover_results);
+    app->discover_dirty = false;
 }
 
 static void fuse_radio_app_reset_wifi_status(FuseRadioApp* app) {
@@ -1030,19 +1035,27 @@ bool fuse_radio_app_start_wifi_disconnect(FuseRadioApp* app) {
 bool fuse_radio_app_start_wifi_discover(FuseRadioApp* app) {
     if(app->module_state != FuseRadioModuleStateDetected) {
         fuse_radio_app_reset_discover_results(app);
-        fuse_radio_app_append_discover_text(app, "Board is not ready.");
+        app->discover_results.has_error = true;
+        fuse_radio_app_strlcpy(
+            app->discover_results.error,
+            "Board is not ready.",
+            sizeof(app->discover_results.error));
         return false;
     }
 
     app->current_request = FuseRadioRequestDiscover;
     fuse_radio_app_set_wifi_action(app, FuseRadioWifiActionDiscovering, "DISCOVERING");
     fuse_radio_app_reset_discover_results(app);
-    fuse_radio_app_append_discover_text(app, "Probing local subnet...\n");
+    app->discover_results.active = true;
 
     if(!fuse_radio_app_send_wifi_discover_command(app)) {
         app->current_request = FuseRadioRequestNone;
         fuse_radio_app_reset_discover_results(app);
-        fuse_radio_app_append_discover_text(app, "UART write failed while starting discovery.");
+        app->discover_results.has_error = true;
+        fuse_radio_app_strlcpy(
+            app->discover_results.error,
+            "UART write failed while starting discovery.",
+            sizeof(app->discover_results.error));
         return false;
     }
 
@@ -1307,63 +1320,135 @@ static void fuse_radio_app_parse_http_line(FuseRadioApp* app, const char* line) 
 static void fuse_radio_app_parse_discover_network_line(FuseRadioApp* app, const char* line) {
     const char* subnet = strstr(line, "subnet=");
     const char* self = strstr(line, " self=");
+    const char* hosts = strstr(line, " hosts=");
 
     if(!subnet || !self) {
-        fuse_radio_app_append_discover_text(app, "%s\n", line);
         return;
     }
 
     subnet += 7;
     self += 6;
 
-    char subnet_text[32] = {0};
-    char self_text[32] = {0};
+    char subnet_text[FUSE_RADIO_DISCOVER_SUBNET_SIZE] = {0};
+    char self_text[sizeof(app->discover_results.self_ip)] = {0};
     size_t subnet_len = (size_t)(strstr(subnet, " self=") - subnet);
-    size_t self_len = strcspn(self, " ");
+    size_t self_len = hosts ? (size_t)(hosts - self) : strcspn(self, " ");
 
     if(subnet_len >= sizeof(subnet_text)) subnet_len = sizeof(subnet_text) - 1U;
     if(self_len >= sizeof(self_text)) self_len = sizeof(self_text) - 1U;
 
     memcpy(subnet_text, subnet, subnet_len);
     memcpy(self_text, self, self_len);
-    fuse_radio_app_append_discover_text(app, "Subnet: %s\nSelf: %s\n\n", subnet_text, self_text);
+
+    fuse_radio_app_strlcpy(
+        app->discover_results.subnet, subnet_text, sizeof(app->discover_results.subnet));
+    fuse_radio_app_strlcpy(
+        app->discover_results.self_ip, self_text, sizeof(app->discover_results.self_ip));
+    if(hosts) {
+        app->discover_results.total_hosts = (uint16_t)strtoul(hosts + 7, NULL, 10);
+    }
+    app->discover_dirty = true;
+}
+
+static void fuse_radio_app_parse_discover_progress_line(FuseRadioApp* app, const char* line) {
+    const char* scanned = strstr(line, "scanned=");
+    const char* total = strstr(line, " total=");
+    const char* found = strstr(line, " found=");
+    const char* current = strstr(line, " current=");
+
+    if(scanned) {
+        app->discover_results.scanned_count = (uint16_t)strtoul(scanned + 8, NULL, 10);
+    }
+    if(total) {
+        app->discover_results.total_hosts = (uint16_t)strtoul(total + 7, NULL, 10);
+    }
+    if(found) {
+        app->discover_results.found_count = (uint16_t)strtoul(found + 7, NULL, 10);
+    }
+    if(current) {
+        const size_t current_len = strcspn(current + 9, " ");
+        char current_text[sizeof(app->discover_results.current_ip)] = {0};
+        size_t copy_len = current_len;
+
+        if(copy_len >= sizeof(current_text)) {
+            copy_len = sizeof(current_text) - 1U;
+        }
+
+        memcpy(current_text, current + 9, copy_len);
+        fuse_radio_app_strlcpy(
+            app->discover_results.current_ip,
+            current_text,
+            sizeof(app->discover_results.current_ip));
+    }
+
+    if(app->discover_results.total_hosts > 0U) {
+        app->discover_results.progress_percent = (uint8_t)(
+            (app->discover_results.scanned_count * 100U) / app->discover_results.total_hosts);
+        if(app->discover_results.progress_percent > 100U) {
+            app->discover_results.progress_percent = 100U;
+        }
+    }
+
+    app->discover_dirty = true;
 }
 
 static void fuse_radio_app_parse_discover_found_line(FuseRadioApp* app, const char* line) {
     const char* ip = strstr(line, "ip=");
     const char* host = strstr(line, " host=");
+    const char* source = strstr(line, " source=");
     const char* rtt = strstr(line, " rtt_ms=");
 
-    if(!ip || !host || !rtt) {
-        fuse_radio_app_append_discover_text(app, "%s\n", line);
+    if(!ip || !host || !source || !rtt) {
         return;
     }
 
     ip += 3;
     host += 6;
+    source += 8;
     rtt += 8;
 
-    char ip_text[32] = {0};
-    char host_text[64] = {0};
+    char ip_text[16] = {0};
+    char host_text[FUSE_RADIO_DISCOVER_HOSTNAME_SIZE] = {0};
+    char source_text[16] = {0};
     char rtt_text[16] = {0};
     size_t ip_len = (size_t)(strstr(ip, " host=") - ip);
-    size_t host_len = (size_t)(strstr(host, " rtt_ms=") - host);
+    size_t host_len = (size_t)(strstr(host, " source=") - host);
+    size_t source_len = (size_t)(strstr(source, " rtt_ms=") - source);
     size_t rtt_len = strcspn(rtt, " ");
 
     if(ip_len >= sizeof(ip_text)) ip_len = sizeof(ip_text) - 1U;
     if(host_len >= sizeof(host_text)) host_len = sizeof(host_text) - 1U;
+    if(source_len >= sizeof(source_text)) source_len = sizeof(source_text) - 1U;
     if(rtt_len >= sizeof(rtt_text)) rtt_len = sizeof(rtt_text) - 1U;
 
     memcpy(ip_text, ip, ip_len);
     memcpy(host_text, host, host_len);
+    memcpy(source_text, source, source_len);
     memcpy(rtt_text, rtt, rtt_len);
 
-    fuse_radio_app_append_discover_text(
-        app,
-        "%s\n%s  %sms\n\n",
-        ip_text,
-        strcmp(host_text, "-") == 0 ? "host:-" : host_text,
-        rtt_text);
+    if(app->discover_results.count < FUSE_RADIO_MAX_DISCOVER_HOSTS) {
+        FuseRadioDiscoverHost* discover_host =
+            &app->discover_results.hosts[app->discover_results.count++];
+
+        fuse_radio_app_strlcpy(discover_host->ip, ip_text, sizeof(discover_host->ip));
+        discover_host->rtt_ms = (uint16_t)strtoul(rtt_text, NULL, 10);
+        discover_host->has_name = strcmp(host_text, "-") != 0;
+        if(discover_host->has_name) {
+            fuse_radio_app_strlcpy(discover_host->name, host_text, sizeof(discover_host->name));
+        }
+
+        if(strcmp(source_text, "mdns") == 0) {
+            discover_host->name_source = FuseRadioDiscoverNameSourceMdns;
+        } else if(strcmp(source_text, "rdns") == 0) {
+            discover_host->name_source = FuseRadioDiscoverNameSourceReverseDns;
+        } else {
+            discover_host->name_source = FuseRadioDiscoverNameSourceNone;
+        }
+    } else {
+        app->discover_results.truncated_count++;
+    }
+
+    app->discover_dirty = true;
 }
 
 static bool fuse_radio_app_parse_ap_line(FuseRadioApp* app, const char* line) {
@@ -1575,9 +1660,14 @@ static void fuse_radio_app_handle_error_line(FuseRadioApp* app, const char* line
 
     if(app->current_request == FuseRadioRequestDiscover) {
         fuse_radio_app_reset_discover_results(app);
-        fuse_radio_app_append_discover_text(app, "%s", line);
+        app->discover_results.has_error = true;
+        fuse_radio_app_strlcpy(app->discover_results.error, line, sizeof(app->discover_results.error));
+        app->discover_results.complete = true;
+        app->discover_results.active = false;
         fuse_radio_app_set_wifi_action(app, FuseRadioWifiActionNone, "NONE");
         app->current_request = FuseRadioRequestNone;
+        view_dispatcher_send_custom_event(
+            app->view_dispatcher, FuseRadioCustomEventWifiDiscoverFailed);
         return;
     }
 
@@ -1724,8 +1814,9 @@ static void fuse_radio_app_handle_line(FuseRadioApp* app, const char* line) {
         fuse_radio_app_reset_mdns_results(app);
         fuse_radio_app_append_mdns_text(app, "Results: %u\n\n", (unsigned)app->mdns_count);
     } else if(strncmp(line, "DISCOVER_NETWORK ", 17) == 0) {
-        fuse_radio_app_reset_discover_results(app);
         fuse_radio_app_parse_discover_network_line(app, line);
+    } else if(strncmp(line, "DISCOVER_PROGRESS ", 18) == 0) {
+        fuse_radio_app_parse_discover_progress_line(app, line);
     } else if(strncmp(line, "DISCOVER_FOUND ", 15) == 0) {
         fuse_radio_app_parse_discover_found_line(app, line);
     } else if(strncmp(line, "DISCOVER_DONE ", 14) == 0) {
@@ -1734,23 +1825,23 @@ static void fuse_radio_app_handle_line(FuseRadioApp* app, const char* line) {
         const char* duration = strstr(line, " duration_ms=");
 
         if(scanned) {
-            app->discover_scanned_count = (uint16_t)strtoul(scanned + 8, NULL, 10);
+            app->discover_results.scanned_count = (uint16_t)strtoul(scanned + 8, NULL, 10);
         }
         if(found) {
-            app->discover_found_count = (uint16_t)strtoul(found + 7, NULL, 10);
+            app->discover_results.found_count = (uint16_t)strtoul(found + 7, NULL, 10);
         }
         if(duration) {
-            app->discover_duration_ms = (uint32_t)strtoul(duration + 13, NULL, 10);
+            app->discover_results.duration_ms = (uint32_t)strtoul(duration + 13, NULL, 10);
         }
 
-        fuse_radio_app_append_discover_text(
-            app,
-            "Summary: %u scanned, %u found\n%lu ms",
-            (unsigned)app->discover_scanned_count,
-            (unsigned)app->discover_found_count,
-            (unsigned long)app->discover_duration_ms);
+        app->discover_results.progress_percent = 100U;
+        app->discover_results.complete = true;
+        app->discover_results.active = false;
         fuse_radio_app_set_wifi_action(app, FuseRadioWifiActionNone, "NONE");
         app->current_request = FuseRadioRequestNone;
+        app->discover_dirty = true;
+        view_dispatcher_send_custom_event(
+            app->view_dispatcher, FuseRadioCustomEventWifiDiscoverDone);
     } else if(strncmp(line, "MDNS host=", 10) == 0) {
         fuse_radio_app_parse_mdns_line(app, line);
     } else if(strncmp(line, "MDNS_TRUNCATED ", 15) == 0) {
@@ -2166,26 +2257,6 @@ void fuse_radio_app_refresh_wifi_info_widget(FuseRadioApp* app) {
     app->wifi_info_dirty = false;
 }
 
-void fuse_radio_app_refresh_discover_widget(FuseRadioApp* app) {
-    furi_assert(app);
-
-    const bool discover_active = app->current_request == FuseRadioRequestDiscover;
-
-    widget_reset(app->widget);
-    widget_add_string_element(app->widget, 64, 5, AlignCenter, AlignTop, FontPrimary, "Discover");
-    widget_add_text_scroll_element(app->widget, 0, 15, 128, 38, app->discover_info_text);
-    if(!discover_active) {
-        widget_add_button_element(
-            app->widget,
-            GuiButtonTypeCenter,
-            "Probe",
-            fuse_radio_app_wifi_discover_button_callback,
-            app);
-    }
-
-    app->discover_dirty = false;
-}
-
 void fuse_radio_app_refresh_mdns_widget(FuseRadioApp* app) {
     furi_assert(app);
 
@@ -2261,6 +2332,7 @@ void fuse_radio_app_refresh_scan_view(FuseRadioApp* app) {
 
 static bool fuse_radio_app_scene_requires_connected(uint32_t scene) {
     return scene == FuseRadioSceneWifiConnectedMenu ||
+           scene == FuseRadioSceneWifiDiscoverProgress ||
            scene == FuseRadioSceneWifiDiscoverResult ||
            scene == FuseRadioSceneWifiHttpResult ||
            scene == FuseRadioSceneWifiMdnsHost ||
@@ -2435,9 +2507,18 @@ void fuse_radio_app_handle_tick(FuseRadioApp* app) {
     if(app->wifi_info_dirty && scene == FuseRadioSceneWifiStatus) {
         fuse_radio_app_refresh_wifi_info_widget(app);
     }
+    if(scene == FuseRadioSceneWifiDiscoverProgress) {
+        if(app->discover_dirty) {
+            fuse_radio_app_refresh_discover_progress_view(app);
+            view_dispatcher_switch_to_view(app->view_dispatcher, FuseRadioViewDiscoverProgress);
+        } else if(fuse_radio_app_discover_stream_active(app)) {
+            fuse_radio_discover_progress_view_advance_animation(app->discover_progress_view);
+        }
+    }
     if(app->discover_dirty && scene == FuseRadioSceneWifiDiscoverResult &&
        !fuse_radio_app_discover_stream_active(app)) {
-        fuse_radio_app_refresh_discover_widget(app);
+        fuse_radio_app_refresh_discover_result_view(app);
+        view_dispatcher_switch_to_view(app->view_dispatcher, FuseRadioViewDiscoverResult);
     }
     if(app->mdns_dirty && scene == FuseRadioSceneWifiMdnsResult) {
         fuse_radio_app_refresh_mdns_widget(app);
@@ -2482,6 +2563,8 @@ FuseRadioApp* fuse_radio_app_alloc(void) {
     app->scan_view = fuse_radio_scan_view_alloc();
     app->text_input = text_input_alloc();
     app->channel_picker_view = fuse_radio_channel_picker_view_alloc();
+    app->discover_progress_view = fuse_radio_discover_progress_view_alloc();
+    app->discover_result_view = fuse_radio_discover_result_view_alloc();
     app->survey_preset_view = fuse_radio_survey_preset_view_alloc();
     app->survey_progress_view = fuse_radio_survey_progress_view_alloc();
     app->survey_result_view = fuse_radio_survey_result_view_alloc();
@@ -2520,6 +2603,14 @@ FuseRadioApp* fuse_radio_app_alloc(void) {
         fuse_radio_channel_picker_view_get_view(app->channel_picker_view));
     view_dispatcher_add_view(
         app->view_dispatcher,
+        FuseRadioViewDiscoverProgress,
+        fuse_radio_discover_progress_view_get_view(app->discover_progress_view));
+    view_dispatcher_add_view(
+        app->view_dispatcher,
+        FuseRadioViewDiscoverResult,
+        fuse_radio_discover_result_view_get_view(app->discover_result_view));
+    view_dispatcher_add_view(
+        app->view_dispatcher,
         FuseRadioViewSurveyPreset,
         fuse_radio_survey_preset_view_get_view(app->survey_preset_view));
     view_dispatcher_add_view(
@@ -2542,6 +2633,8 @@ FuseRadioApp* fuse_radio_app_alloc(void) {
     fuse_radio_scan_view_set_callback(app->scan_view, fuse_radio_app_scan_view_callback, app);
     fuse_radio_channel_picker_view_set_callback(
         app->channel_picker_view, fuse_radio_app_watch_channel_callback, app);
+    fuse_radio_discover_result_view_set_callback(
+        app->discover_result_view, fuse_radio_app_discover_result_view_callback, app);
     fuse_radio_survey_preset_view_set_callback(
         app->survey_preset_view, fuse_radio_app_survey_preset_view_callback, app);
     fuse_radio_survey_result_view_set_callback(
@@ -2575,6 +2668,12 @@ void fuse_radio_app_free(FuseRadioApp* app) {
 
     view_dispatcher_remove_view(app->view_dispatcher, FuseRadioViewChannelPicker);
     fuse_radio_channel_picker_view_free(app->channel_picker_view);
+
+    view_dispatcher_remove_view(app->view_dispatcher, FuseRadioViewDiscoverProgress);
+    fuse_radio_discover_progress_view_free(app->discover_progress_view);
+
+    view_dispatcher_remove_view(app->view_dispatcher, FuseRadioViewDiscoverResult);
+    fuse_radio_discover_result_view_free(app->discover_result_view);
 
     view_dispatcher_remove_view(app->view_dispatcher, FuseRadioViewSurveyPreset);
     fuse_radio_survey_preset_view_free(app->survey_preset_view);

@@ -2,6 +2,8 @@
 
 #include "fuse_radio.h"
 #include "fuse_radio_channel_picker_view.h"
+#include "fuse_radio_discover_progress_view.h"
+#include "fuse_radio_discover_result_view.h"
 #include "fuse_radio_survey_preset_view.h"
 #include "fuse_radio_survey_progress_view.h"
 #include "fuse_radio_survey_result_view.h"
@@ -35,7 +37,6 @@
 #define FUSE_RADIO_WIFI_INFO_SIZE     256U
 #define FUSE_RADIO_HTTP_INFO_SIZE     768U
 #define FUSE_RADIO_MDNS_INFO_SIZE     512U
-#define FUSE_RADIO_DISCOVER_INFO_SIZE 1024U
 #define FUSE_RADIO_PROMISCUOUS_INFO_SIZE 1024U
 #define FUSE_RADIO_PROMISCUOUS_LIVE_SIZE 192U
 #define FUSE_RADIO_DETECT_TIMEOUT_MS  5000U
@@ -52,6 +53,8 @@ typedef enum {
     FuseRadioViewScan,
     FuseRadioViewTextInput,
     FuseRadioViewChannelPicker,
+    FuseRadioViewDiscoverProgress,
+    FuseRadioViewDiscoverResult,
     FuseRadioViewSurveyPreset,
     FuseRadioViewSurveyProgress,
     FuseRadioViewSurveyResult,
@@ -98,6 +101,8 @@ typedef enum {
     FuseRadioCustomEventConnectPasswordDone,
     FuseRadioCustomEventMdnsHostDone,
     FuseRadioCustomEventWifiDiscoverRefresh,
+    FuseRadioCustomEventWifiDiscoverDone,
+    FuseRadioCustomEventWifiDiscoverFailed,
     FuseRadioCustomEventWifiStatusRefresh,
     FuseRadioCustomEventWifiStatusMenu,
     FuseRadioCustomEventWifiHttpRefresh,
@@ -147,6 +152,8 @@ struct FuseRadioApp {
     FuseRadioScanView* scan_view;
     TextInput* text_input;
     FuseRadioChannelPickerView* channel_picker_view;
+    FuseRadioDiscoverProgressView* discover_progress_view;
+    FuseRadioDiscoverResultView* discover_result_view;
     FuseRadioSurveyPresetView* survey_preset_view;
     FuseRadioSurveyProgressView* survey_progress_view;
     FuseRadioSurveyResultView* survey_result_view;
@@ -169,6 +176,7 @@ struct FuseRadioApp {
     FuseRadioPromiscuousPreset promiscuous_preset;
     FuseRadioHttpPreset http_preset;
     FuseRadioScanResults scan_results;
+    FuseRadioDiscoverResults discover_results;
     FuseRadioSurveyResults survey_results;
     FuseRadioWatchSummary watch_summary;
     FuseRadioWatchDevice watch_devices[FUSE_RADIO_MAX_WATCH_DEVICES];
@@ -192,14 +200,10 @@ struct FuseRadioApp {
     char wifi_info_text[FUSE_RADIO_WIFI_INFO_SIZE];
     char http_title[24];
     char http_info_text[FUSE_RADIO_HTTP_INFO_SIZE];
-    char discover_info_text[FUSE_RADIO_DISCOVER_INFO_SIZE];
     char mdns_info_text[FUSE_RADIO_MDNS_INFO_SIZE];
     char promiscuous_info_text[FUSE_RADIO_PROMISCUOUS_INFO_SIZE];
     char promiscuous_live_text[FUSE_RADIO_PROMISCUOUS_LIVE_SIZE];
     uint16_t wifi_status_reason;
-    uint16_t discover_scanned_count;
-    uint16_t discover_found_count;
-    uint32_t discover_duration_ms;
     uint32_t promiscuous_live_elapsed_ms;
     uint32_t promiscuous_live_total_frames;
     uint16_t promiscuous_live_unique_count;
@@ -265,7 +269,6 @@ void fuse_radio_app_handle_tick(FuseRadioApp* app);
 void fuse_radio_app_refresh_status_widget(FuseRadioApp* app);
 void fuse_radio_app_refresh_wifi_info_widget(FuseRadioApp* app);
 void fuse_radio_app_refresh_http_widget(FuseRadioApp* app);
-void fuse_radio_app_refresh_discover_widget(FuseRadioApp* app);
 void fuse_radio_app_refresh_mdns_widget(FuseRadioApp* app);
 void fuse_radio_app_refresh_promiscuous_widget(FuseRadioApp* app);
 void fuse_radio_app_refresh_scan_view(FuseRadioApp* app);

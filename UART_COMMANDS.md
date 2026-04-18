@@ -501,9 +501,10 @@ WIFI DISCOVER
 Successful response format:
 
 ```text
-DISCOVER_NETWORK subnet=<network>/<prefix> self=<local_ip>
-DISCOVER_FOUND ip=<ip> host=<hostname|-> rtt_ms=<round_trip_ms>
-DISCOVER_FOUND ip=<ip> host=<hostname|-> rtt_ms=<round_trip_ms>
+DISCOVER_NETWORK subnet=<network>/<prefix> self=<local_ip> hosts=<usable_host_count>
+DISCOVER_PROGRESS scanned=<count> total=<usable_host_count> found=<count> current=<last_ip_in_batch>
+DISCOVER_FOUND ip=<ip> host=<hostname|-> source=<none|mdns|rdns> rtt_ms=<round_trip_ms>
+DISCOVER_FOUND ip=<ip> host=<hostname|-> source=<none|mdns|rdns> rtt_ms=<round_trip_ms>
 ...
 DISCOVER_DONE scanned=<count> found=<count> duration_ms=<total_ms>
 ```
@@ -513,8 +514,9 @@ Notes:
 - The discovery scan is blocking inside the command handler.
 - The current implementation probes each usable host in the connected IPv4 subnet with one ICMP echo request.
 - The current implementation probes up to 4 hosts in parallel per batch to stay within typical ESP-IDF socket limits.
+- Progress is streamed once per ping batch so a client can show a determinate progress bar while discovery is running.
 - Results are streamed only for hosts that respond to the ping.
-- The current implementation does not perform hostname resolution yet, so `host=-` is expected for all results.
+- The `source` field is reserved for hostname enrichment. In the current firmware build it is emitted as `none` for all results.
 - The current implementation supports subnets with at most 254 usable host addresses. Larger subnets return an error.
 
 If Wi-Fi is not connected with an IP address:
@@ -548,10 +550,12 @@ Example:
 
 ```text
 WIFI DISCOVER
-DISCOVER_NETWORK subnet=192.168.1.0/24 self=192.168.1.42
-DISCOVER_FOUND ip=192.168.1.1 host=- rtt_ms=2
-DISCOVER_FOUND ip=192.168.1.44 host=- rtt_ms=6
-DISCOVER_FOUND ip=192.168.1.87 host=- rtt_ms=14
+DISCOVER_NETWORK subnet=192.168.1.0/24 self=192.168.1.42 hosts=253
+DISCOVER_PROGRESS scanned=4 total=253 found=1 current=192.168.1.4
+DISCOVER_FOUND ip=192.168.1.1 host=- source=none rtt_ms=2
+DISCOVER_PROGRESS scanned=8 total=253 found=2 current=192.168.1.8
+DISCOVER_FOUND ip=192.168.1.44 host=- source=none rtt_ms=6
+DISCOVER_FOUND ip=192.168.1.87 host=- source=none rtt_ms=14
 DISCOVER_DONE scanned=253 found=3 duration_ms=5412
 ```
 

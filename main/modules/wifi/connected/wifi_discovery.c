@@ -22,7 +22,7 @@
 #define WIFI_DISCOVERY_IFKEY "WIFI_STA_DEF"
 #define WIFI_DISCOVERY_MAX_PARALLEL_PINGS 4
 #define WIFI_DISCOVERY_MAX_HOSTS 254U
-#define WIFI_DISCOVERY_LINE_MAX_LENGTH 192
+#define WIFI_DISCOVERY_LINE_MAX_LENGTH 256
 #define WIFI_DISCOVERY_PING_TIMEOUT_MS 250U
 #define WIFI_DISCOVERY_PING_DATA_SIZE 16U
 #define WIFI_DISCOVERY_RECV_BUFFER_SIZE 96U
@@ -106,7 +106,8 @@ static void wifi_discovery_write_network_line(
     void *context,
     uint32_t network_ip,
     uint32_t prefix_length,
-    uint32_t self_ip)
+    uint32_t self_ip,
+    uint32_t host_count)
 {
     char network_string[16];
     char self_string[16];
@@ -122,10 +123,38 @@ static void wifi_discovery_write_network_line(
     snprintf(
         line,
         sizeof(line),
-        "DISCOVER_NETWORK subnet=%s/%u self=%s\n",
+        "DISCOVER_NETWORK subnet=%s/%u self=%s hosts=%u\n",
         network_string,
         (unsigned int)prefix_length,
-        self_string);
+        self_string,
+        (unsigned int)host_count);
+    write_line(line, context);
+}
+
+static void wifi_discovery_write_progress_line(
+    wifi_discovery_result_writer_t write_line,
+    void *context,
+    uint32_t scanned_count,
+    uint32_t host_count,
+    uint32_t found_count,
+    uint32_t current_ip)
+{
+    char current_string[16];
+    char line[WIFI_DISCOVERY_LINE_MAX_LENGTH];
+
+    if (write_line == NULL) {
+        return;
+    }
+
+    wifi_discovery_format_ipv4(current_ip, current_string, sizeof(current_string));
+    snprintf(
+        line,
+        sizeof(line),
+        "DISCOVER_PROGRESS scanned=%u total=%u found=%u current=%s\n",
+        (unsigned int)scanned_count,
+        (unsigned int)host_count,
+        (unsigned int)found_count,
+        current_string);
     write_line(line, context);
 }
 
@@ -146,9 +175,10 @@ static void wifi_discovery_write_found_line(
     snprintf(
         line,
         sizeof(line),
-        "DISCOVER_FOUND ip=%s host=%s rtt_ms=%u\n",
+        "DISCOVER_FOUND ip=%s host=%s source=%s rtt_ms=%u\n",
         ip_string,
         "-",
+        "none",
         (unsigned int)target->round_trip_ms);
     write_line(line, context);
 }
@@ -410,7 +440,7 @@ esp_err_t wifi_discovery_scan_subnet(wifi_discovery_result_writer_t write_line, 
     ping_id = (uint16_t)(esp_timer_get_time() & 0xFFFFU);
 
     prefix_length = wifi_discovery_netmask_to_prefix(netmask);
-    wifi_discovery_write_network_line(write_line, context, network, prefix_length, ip);
+    wifi_discovery_write_network_line(write_line, context, network, prefix_length, ip, host_count);
 
     {
         char network_string[16];
@@ -462,6 +492,16 @@ esp_err_t wifi_discovery_scan_subnet(wifi_discovery_result_writer_t write_line, 
                 ++found_count;
                 wifi_discovery_write_found_line(write_line, context, &targets[index]);
             }
+        }
+
+        if (batch_count > 0U) {
+            wifi_discovery_write_progress_line(
+                write_line,
+                context,
+                scanned_count,
+                host_count,
+                found_count,
+                targets[batch_count - 1U].host_ip);
         }
     }
 
