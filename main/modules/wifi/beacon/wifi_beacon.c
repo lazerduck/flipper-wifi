@@ -290,10 +290,6 @@ esp_err_t wifi_beacon_start(
         return err;
     }
 
-    /* Cap TX power */
-    esp_wifi_get_max_tx_power(&current_tx_power);
-    esp_wifi_set_max_tx_power((int8_t)(WIFI_BEACON_TX_POWER_MAX * 4)); /* units: 0.25 dBm */
-
     /* Pre-build all frames */
     portENTER_CRITICAL(&s_beacon_guard);
     memset(&s_session, 0, sizeof(s_session));

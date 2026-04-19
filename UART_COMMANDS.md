@@ -44,6 +44,7 @@ ERR UNKNOWN_COMMAND
 | Command | Status | Purpose |
 | --- | --- | --- |
 | `PING` | Implemented | Link test / keepalive |
+| `BLE <SCAN|STATUS|GATT ...>` | Stub | Reserved BLE command family and UI transport scaffold |
 | `WIFI SCAN` | Implemented | Scan nearby APs |
 | `WIFI CONNECT ssid=<ssid> psw=<password>` | Implemented | Start STA connection |
 | `WIFI STATUS` | Implemented | Read current STA state |
@@ -72,6 +73,44 @@ Response:
 
 ```text
 PONG
+```
+
+### `BLE`
+
+BLE is now a reserved top-level command family so the Flipper UI and UART protocol can grow together.
+
+Current shape:
+
+- `BLE SCAN` is intended to become the base primitive for nearby-device discovery
+- `BLE STATUS` is reserved for future BLE mode or activity reporting
+- `BLE GATT ...` is reserved for later per-device inspection flows
+
+Current responses are explicit stubs:
+
+```text
+BLE
+ERR USAGE BLE <SCAN|STATUS|GATT>
+```
+
+```text
+BLE SCAN
+ERR BLE_SCAN_NOT_IMPLEMENTED
+```
+
+```text
+BLE STATUS
+ERR BLE_STATUS_NOT_IMPLEMENTED
+```
+
+```text
+BLE GATT mac=AA:BB:CC:DD:EE:FF
+ERR BLE_GATT_NOT_IMPLEMENTED
+```
+
+Unknown BLE subcommands reply with:
+
+```text
+ERR UNKNOWN_BLE_COMMAND
 ```
 
 ### `WIFI`

@@ -1,5 +1,6 @@
 #include "command/command_router.h"
 
+#include "modules/ble/ble_command.h"
 #include "modules/ping/ping_command.h"
 #include "modules/query/query_command.h"
 #include "modules/send/send_command.h"
@@ -12,6 +13,10 @@ void command_router_dispatch(const char *command_line, const command_context_t *
     }
 
     if (ping_command_try_handle(command_line, context)) {
+        return;
+    }
+
+    if (ble_command_try_handle(command_line, context)) {
         return;
     }
 

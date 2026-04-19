@@ -2235,7 +2235,7 @@ static void fuse_radio_app_handle_line(FuseRadioApp* app, const char* line) {
         snprintf(
             app->beacon_info_text,
             sizeof(app->beacon_info_text),
-            "Ch %lu  %lus\n%lu SSIDs active\n\nBack or OK to stop",
+            "Ch %lu  %lus\n%lu SSIDs active\nBack or OK to stop",
             ch,
             dur_ms / 1000UL,
             ssid_count);

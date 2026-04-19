@@ -25,6 +25,18 @@ static const char * const s_preset_ssids[] = {
     "Bill Wi the Science Fi",
     "The LAN Before Time",
     "Silence of the LANs",
+    "Wu-Tang LAN",
+    "LAN Solo",
+    "The Promised LAN",
+    "Martin Router King",
+    "Router? I Hardly Know Her",
+    "Tell My WiFi Love Her",
+    "Winternet Is Coming",
+    "Drop It Like Its Hotspot",
+    "Nacho WiFi",
+    "404 Network Not Found",
+    "Definitely Not Skynet",
+    "It Hurts When IP",
 };
 static const size_t s_preset_ssid_count =
     sizeof(s_preset_ssids) / sizeof(s_preset_ssids[0]);

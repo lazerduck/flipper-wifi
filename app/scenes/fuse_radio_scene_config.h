@@ -1,5 +1,8 @@
 ADD_SCENE(fuse_radio, status, Status)
 ADD_SCENE(fuse_radio, main_menu, MainMenu)
+ADD_SCENE(fuse_radio, ble_menu, BleMenu)
+ADD_SCENE(fuse_radio, ble_scan, BleScan)
+ADD_SCENE(fuse_radio, ble_saved_devices, BleSavedDevices)
 ADD_SCENE(fuse_radio, wifi_menu, WifiMenu)
 ADD_SCENE(fuse_radio, wifi_scan, WifiScan)
 ADD_SCENE(fuse_radio, wifi_status, WifiStatus)

@@ -1,7 +1,7 @@
 #include "../fuse_radio_app_i.h"
 
 #define BEACON_DEFAULT_CHANNEL    6U
-#define BEACON_DEFAULT_DURATION_MS 30000U
+#define BEACON_DEFAULT_DURATION_MS 600000U
 
 static void fuse_radio_app_wifi_beacon_stop_callback(
     GuiButtonType result,

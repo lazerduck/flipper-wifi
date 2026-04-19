@@ -39,14 +39,7 @@ bool fuse_radio_scene_main_menu_on_event(void* context, SceneManagerEvent event)
         if(event.event == FuseRadioMainMenuIndexWifi) {
             scene_manager_next_scene(app->scene_manager, FuseRadioSceneWifiMenu);
         } else if(event.event == FuseRadioMainMenuIndexBle) {
-            strncpy(app->placeholder_title, "BLE", sizeof(app->placeholder_title) - 1U);
-            app->placeholder_title[sizeof(app->placeholder_title) - 1U] = '\0';
-            strncpy(
-                app->placeholder_message,
-                "Transport is ready.\nRadio features are next.",
-                sizeof(app->placeholder_message) - 1U);
-            app->placeholder_message[sizeof(app->placeholder_message) - 1U] = '\0';
-            scene_manager_next_scene(app->scene_manager, FuseRadioScenePlaceholder);
+            scene_manager_next_scene(app->scene_manager, FuseRadioSceneBleMenu);
         } else if(event.event == FuseRadioMainMenuIndexZigbee) {
             strncpy(app->placeholder_title, "Zigbee", sizeof(app->placeholder_title) - 1U);
             app->placeholder_title[sizeof(app->placeholder_title) - 1U] = '\0';

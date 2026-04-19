@@ -2,6 +2,7 @@ idf_component_register(
     SRCS
         "main.c"
         "command/command_router.c"
+        "modules/ble/ble_command.c"
         "modules/status_led/status_led.c"
         "modules/ping/ping_command.c"
         "modules/wifi/connected/connected_command.c"

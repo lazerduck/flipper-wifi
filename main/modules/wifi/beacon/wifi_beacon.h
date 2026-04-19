@@ -7,9 +7,9 @@
 #include "esp_err.h"
 
 /* Safety limits */
-#define WIFI_BEACON_MAX_SSIDS           8U
+#define WIFI_BEACON_MAX_SSIDS           20U
 #define WIFI_BEACON_MAX_SSID_LENGTH     32U
-#define WIFI_BEACON_MAX_DURATION_MS     60000U
+#define WIFI_BEACON_MAX_DURATION_MS     600000U
 #define WIFI_BEACON_INTERVAL_MS         102U  /* 100 TU, standard beacon period */
 #define WIFI_BEACON_TX_POWER_MAX        8     /* ~8 dBm — roughly half of full power */
 

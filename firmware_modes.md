@@ -1,6 +1,6 @@
-# Wi-Fi Feature Map
+# Radio Feature Map
 
-This document lays out the Wi-Fi feature structure for the ESP32 firmware, separating normal station-mode operations from promiscuous-mode operations.
+This document lays out the current Wi-Fi feature structure and the planned BLE feature structure for the ESP32 firmware.
 
 The intent is to make the high-level behaviour, dependencies, and likely firmware states clear before expanding the command set further.
 
@@ -9,30 +9,52 @@ The intent is to make the high-level behaviour, dependencies, and likely firmwar
 ## Top-level structure
 
 ```text
-WiFi
+Radio
 |
-|- Scan
+|- WiFi
+|  |
+|  |- Scan
+|  |
+|  |- Connect (join an AP)
+|  |  |
+|  |  |- Discover (scan for IPs on local network)
+|  |  |
+|  |  |- Send pre-configured requests
+|  |  |
+|  |  |- mDNS / local service discovery
+|  |  |
+|  |  `- Other connected-mode features (to be defined)
+|  |
+|  `- Enter Promiscuous Mode
+|     |
+|     |- Survey
+|     |
+|     `- Watch
 |
-|- Connect (join an AP)
-|  |
-|  |- Discover (scan for IPs on local network)
-|  |
-|  |- Send pre-configured requests
-|  |
-|  |- mDNS / local service discovery
-|  |
-|  `- Other connected-mode features (to be defined)
-|
-`- Enter Promiscuous Mode
+`- BLE
    |
-   |- Survey
+   |- Scan
+   |  |
+   |  |- BLE zoo / nearby classification
+   |  |
+   |  `- Select a scanned device
+   |     |
+   |     |- Save as owned / tracked device
+   |     |
+   |     `- Inspect / listen for GATT
    |
-   `- Watch
+   `- Saved Devices
+      |
+      |- Refresh / check signal strength
+      |
+      `- Inspect / listen for GATT
 ```
 
 ---
 
 ## Overview
+
+The radio functionality is currently split into a mature Wi-Fi branch and a planned BLE branch.
 
 The Wi-Fi functionality currently falls into three broad areas:
 
@@ -63,6 +85,168 @@ This puts the Wi-Fi radio into a passive listening mode.
 In this mode the ESP32 is no longer operating as a normal network client in the usual sense. Instead, it listens to 802.11 traffic on one channel at a time and reports what it sees.
 
 This is used for radio analysis features such as Survey and Watch.
+
+### 4. BLE
+
+BLE should start from a simpler discovery-first model.
+
+The first BLE capability should be scanning nearby advertisements and turning that into something interesting and understandable on the Flipper.
+
+That means the initial BLE path should be:
+
+1. scan nearby BLE devices
+2. classify what is nearby in a lightweight way
+3. let the user select one scanned device
+4. allow the user to save that device for later
+5. allow later inspection or listening for GATT on devices that make sense to inspect
+
+This keeps BLE focused on discovery, ownership, and repeatable interaction rather than trying to jump straight into arbitrary connect-and-control behaviour.
+
+---
+
+## Planned BLE branch
+
+The intended BLE structure is:
+
+```text
+BLE
+|
+|- Scan
+|  |
+|  |- BLE zoo
+|  |
+|  `- Device details / actions
+|     |
+|     |- Save device
+|     |
+|     `- Listen for GATT
+|
+`- Saved Devices
+   |
+   |- Check strength / presence
+   |
+   `- Listen for GATT
+```
+
+This is intentionally tiered.
+
+The user starts with broad discovery, then narrows into one device, then optionally promotes that device into a saved list for repeat use.
+
+### BLE Scan
+
+BLE scan is the entry point.
+
+Purpose:
+
+* find nearby BLE advertisers
+* show enough metadata to make the results interesting
+* provide the source list for later save or inspect actions
+
+Expected output should include compact fields such as:
+
+* name if advertised
+* MAC address
+* RSSI
+* connectable flag if known
+* manufacturer or service hints if known
+* a coarse category if one can be inferred
+
+This is the BLE equivalent of Wi-Fi scan, but with more emphasis on interpretation because raw BLE advertisements are otherwise not very meaningful to a user.
+
+### BLE zoo
+
+BLE zoo is a presentation layer on top of scan results.
+
+Purpose:
+
+* make scanning feel more alive and informative
+* bucket nearby devices into understandable groups
+* let the user quickly explore what kinds of devices are around
+
+Examples of useful coarse groups:
+
+* beacon
+* sensor
+* wearable
+* audio
+* HID / input device
+* dev board
+* unknown
+
+The important point is that BLE zoo is not a separate radio primitive.
+
+It is a better way to present scan results.
+
+### Selected scanned device
+
+After a scan, the user should be able to select one item and enter a submenu for that device.
+
+Initial actions should be simple:
+
+* save device
+* inspect or listen for GATT
+
+This is the point where the flow changes from broad discovery to one-device interaction.
+
+### Save device
+
+Saving a scanned BLE device means the user is marking it as relevant for later repeat actions.
+
+Expected purpose:
+
+* avoid re-finding the same device manually every time
+* support repeat strength checks
+* support later GATT-oriented inspection workflows
+* distinguish user-owned or intentionally tracked devices from one-off nearby scan noise
+
+This is especially useful for devices the user owns, such as tags, sensors, earbuds, keyboards, badges, or custom boards.
+
+### Saved Devices
+
+Saved Devices should exist as a root-level BLE branch, not only as an action attached to a recent scan.
+
+Purpose:
+
+* provide a stable list of user-important devices
+* allow quick presence or strength checks
+* allow direct entry into later per-device tools
+
+This avoids making scan history the only way to reach a known device.
+
+### Check strength / presence
+
+For a saved BLE device, one useful action is checking whether it is nearby and how strong its signal is.
+
+Expected behaviour:
+
+* perform repeated short refreshes
+* attempt to find the saved device again
+* report whether it is seen
+* show current or recent RSSI
+
+This becomes a lightweight presence meter for the user’s own devices.
+
+### Listen for GATT
+
+The phrase “listen for GATT” should be interpreted carefully.
+
+GATT is generally a connection-oriented interaction model rather than passive observation in the same sense as scan.
+
+For this project, the intended meaning should be:
+
+* inspect exposed services and characteristics on a selected or saved device when appropriate
+* optionally subscribe to notifications on devices the user owns or intentionally interacts with
+* avoid treating arbitrary nearby devices as generic targets for unexplained writes or intrusive probing
+
+So the likely BLE interaction ladder is:
+
+1. scan
+2. select device
+3. save if useful
+4. inspect services / characteristics
+5. optionally subscribe to readable or notify-capable characteristics on supported devices
+
+That is a sensible foundation and avoids trying to make the first BLE pass do too much.
 
 ---
 
@@ -456,5 +640,13 @@ Promiscuous mode:
 * nearby device count
 * rolling channel history
 * best-channel recommendation
+
+BLE:
+
+* BLE zoo categories and counts
+* saved-device presence tracking
+* basic service and characteristic browser
+* notification listener for supported owned devices
+* coarse vendor and device-type hints
 
 These can be added later without changing the top-level model.
