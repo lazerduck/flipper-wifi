@@ -961,6 +961,78 @@ static bool fuse_radio_app_send_wifi_promiscuous_watch_stop_command(FuseRadioApp
     return fuse_radio_app_send_line(app, "WIFI PROMISC WATCH_STOP\n");
 }
 
+static bool fuse_radio_app_send_wifi_beacon_start_command(
+    FuseRadioApp* app,
+    uint8_t channel,
+    uint32_t duration_ms) {
+    char command[64];
+    snprintf(
+        command,
+        sizeof(command),
+        "WIFI BEACON START channel=%u duration_ms=%u\n",
+        (unsigned)channel,
+        (unsigned)duration_ms);
+    return fuse_radio_app_send_line(app, command);
+}
+
+static bool fuse_radio_app_send_wifi_beacon_stop_command(FuseRadioApp* app) {
+    return fuse_radio_app_send_line(app, "WIFI BEACON STOP\n");
+}
+
+bool fuse_radio_app_start_wifi_beacon(FuseRadioApp* app, uint8_t channel, uint32_t duration_ms) {
+    if(app->module_state != FuseRadioModuleStateDetected) {
+        fuse_radio_app_set_error(app, "Board is not ready.");
+        return false;
+    }
+
+    app->current_request = FuseRadioRequestBeaconStart;
+    app->beacon_active = false;
+    app->beacon_stop_pending = false;
+    snprintf(
+        app->beacon_info_text,
+        sizeof(app->beacon_info_text),
+        "Ch %u  %us\nStarting...",
+        (unsigned)channel,
+        (unsigned)(duration_ms / 1000U));
+    app->promiscuous_dirty = true;
+
+    if(!fuse_radio_app_send_wifi_beacon_start_command(app, channel, duration_ms)) {
+        app->current_request = FuseRadioRequestNone;
+        snprintf(
+            app->beacon_info_text,
+            sizeof(app->beacon_info_text),
+            "UART write failed.");
+        return false;
+    }
+
+    return true;
+}
+
+bool fuse_radio_app_stop_wifi_beacon(FuseRadioApp* app) {
+    if(app->current_request != FuseRadioRequestBeaconStart || !app->beacon_active ||
+       app->beacon_stop_pending) {
+        return false;
+    }
+
+    app->beacon_stop_pending = true;
+    snprintf(
+        app->beacon_info_text,
+        sizeof(app->beacon_info_text),
+        "Stopping beacons...");
+    app->promiscuous_dirty = true;
+
+    if(!fuse_radio_app_send_wifi_beacon_stop_command(app)) {
+        app->beacon_stop_pending = false;
+        snprintf(
+            app->beacon_info_text,
+            sizeof(app->beacon_info_text),
+            "Stop failed. Press OK to retry.");
+        return false;
+    }
+
+    return true;
+}
+
 bool fuse_radio_app_request_wifi_status(FuseRadioApp* app) {
     if(app->module_state != FuseRadioModuleStateDetected) {
         fuse_radio_app_set_wifi_info_text(app, "Board is not ready.");
@@ -2150,6 +2222,49 @@ static void fuse_radio_app_handle_line(FuseRadioApp* app, const char* line) {
             "PROMISCUOUS",
             FuseRadioWifiActionNone,
             "NONE");
+    } else if(strncmp(line, "BEACON_STARTED ", 15) == 0) {
+        const char* channel = strstr(line, "channel=");
+        const char* ssids = strstr(line, " ssids=");
+        const char* duration = strstr(line, " duration_ms=");
+        unsigned long ch = channel ? strtoul(channel + 8, NULL, 10) : 0UL;
+        unsigned long ssid_count = ssids ? strtoul(ssids + 7, NULL, 10) : 0UL;
+        unsigned long dur_ms = duration ? strtoul(duration + 13, NULL, 10) : 0UL;
+
+        app->beacon_active = true;
+        app->beacon_stop_pending = false;
+        snprintf(
+            app->beacon_info_text,
+            sizeof(app->beacon_info_text),
+            "Ch %lu  %lus\n%lu SSIDs active\n\nBack or OK to stop",
+            ch,
+            dur_ms / 1000UL,
+            ssid_count);
+        fuse_radio_app_set_wifi_action(app, FuseRadioWifiActionBeaconing, "BEACONING");
+        app->promiscuous_dirty = true;
+        view_dispatcher_send_custom_event(
+            app->view_dispatcher, FuseRadioCustomEventWifiBeaconStarted);
+    } else if(strncmp(line, "BEACON_DONE ", 12) == 0) {
+        const char* channel = strstr(line, "channel=");
+        const char* ssids = strstr(line, " ssids=");
+        const char* duration = strstr(line, " duration_ms=");
+        unsigned long ch = channel ? strtoul(channel + 8, NULL, 10) : 0UL;
+        unsigned long ssid_count = ssids ? strtoul(ssids + 7, NULL, 10) : 0UL;
+        unsigned long dur_ms = duration ? strtoul(duration + 13, NULL, 10) : 0UL;
+
+        app->beacon_active = false;
+        app->beacon_stop_pending = false;
+        app->current_request = FuseRadioRequestNone;
+        snprintf(
+            app->beacon_info_text,
+            sizeof(app->beacon_info_text),
+            "Ch %lu  %lus\n%lu SSIDs broadcast\n\nDone",
+            ch,
+            dur_ms / 1000UL,
+            ssid_count);
+        fuse_radio_app_set_wifi_action(app, FuseRadioWifiActionNone, "NONE");
+        app->promiscuous_dirty = true;
+        view_dispatcher_send_custom_event(
+            app->view_dispatcher, FuseRadioCustomEventWifiBeaconDone);
     } else if(strncmp(line, "ERR ", 4) == 0) {
         fuse_radio_app_handle_error_line(app, line);
     }

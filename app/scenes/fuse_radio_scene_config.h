@@ -17,4 +17,5 @@ ADD_SCENE(fuse_radio, wifi_promiscuous_survey_progress, WifiPromiscuousSurveyPro
 ADD_SCENE(fuse_radio, wifi_promiscuous_survey_result, WifiPromiscuousSurveyResult)
 ADD_SCENE(fuse_radio, wifi_promiscuous_watch_channel, WifiPromiscuousWatchChannel)
 ADD_SCENE(fuse_radio, wifi_promiscuous_result, WifiPromiscuousResult)
+ADD_SCENE(fuse_radio, wifi_beacon, WifiBeacon)
 ADD_SCENE(fuse_radio, placeholder, Placeholder)

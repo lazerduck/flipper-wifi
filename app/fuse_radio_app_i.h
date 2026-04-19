@@ -39,6 +39,7 @@
 #define FUSE_RADIO_MDNS_INFO_SIZE     512U
 #define FUSE_RADIO_PROMISCUOUS_INFO_SIZE 1024U
 #define FUSE_RADIO_PROMISCUOUS_LIVE_SIZE 192U
+#define FUSE_RADIO_BEACON_INFO_SIZE    256U
 #define FUSE_RADIO_DETECT_TIMEOUT_MS  5000U
 #define FUSE_RADIO_PING_INTERVAL_MS   750U
 #define FUSE_RADIO_MODE_GUARD_POLL_MS 1000U
@@ -83,6 +84,8 @@ typedef enum {
     FuseRadioRequestPromiscuousExit,
     FuseRadioRequestPromiscuousSurvey,
     FuseRadioRequestPromiscuousWatch,
+    FuseRadioRequestBeaconStart,
+    FuseRadioRequestBeaconStop,
 } FuseRadioRequest;
 
 typedef enum {
@@ -115,6 +118,9 @@ typedef enum {
     FuseRadioCustomEventWifiSurveyPresetStart,
     FuseRadioCustomEventWifiSurveyDone,
     FuseRadioCustomEventWifiSurveyFailed,
+    FuseRadioCustomEventWifiBeaconStarted,
+    FuseRadioCustomEventWifiBeaconDone,
+    FuseRadioCustomEventWifiBeaconFailed,
 } FuseRadioCustomEvent;
 
 typedef enum {
@@ -203,6 +209,7 @@ struct FuseRadioApp {
     char mdns_info_text[FUSE_RADIO_MDNS_INFO_SIZE];
     char promiscuous_info_text[FUSE_RADIO_PROMISCUOUS_INFO_SIZE];
     char promiscuous_live_text[FUSE_RADIO_PROMISCUOUS_LIVE_SIZE];
+    char beacon_info_text[FUSE_RADIO_BEACON_INFO_SIZE];
     uint16_t wifi_status_reason;
     uint32_t promiscuous_live_elapsed_ms;
     uint32_t promiscuous_live_total_frames;
@@ -221,6 +228,8 @@ struct FuseRadioApp {
     bool connect_flow_active;
     bool promiscuous_watch_live_active;
     bool promiscuous_watch_stop_pending;
+    bool beacon_active;
+    bool beacon_stop_pending;
 
     FuseRadioSavedCredential saved_credentials[FUSE_RADIO_MAX_SAVED_NETWORKS];
 
@@ -264,6 +273,8 @@ bool fuse_radio_app_start_wifi_promiscuous_survey(FuseRadioApp* app, FuseRadioSu
 bool fuse_radio_app_start_wifi_promiscuous_watch(FuseRadioApp* app, uint8_t channel);
 bool fuse_radio_app_stop_wifi_promiscuous_watch(FuseRadioApp* app);
 bool fuse_radio_app_repeat_wifi_promiscuous_action(FuseRadioApp* app);
+bool fuse_radio_app_start_wifi_beacon(FuseRadioApp* app, uint8_t channel, uint32_t duration_ms);
+bool fuse_radio_app_stop_wifi_beacon(FuseRadioApp* app);
 void fuse_radio_app_process_rx(FuseRadioApp* app);
 void fuse_radio_app_handle_tick(FuseRadioApp* app);
 void fuse_radio_app_refresh_status_widget(FuseRadioApp* app);

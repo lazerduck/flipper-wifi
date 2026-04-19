@@ -52,6 +52,7 @@ ERR UNKNOWN_COMMAND
 | `WIFI HTTP preset=<ip|time|location>` | Implemented | Fetch a preset HTTP-backed network lookup |
 | `WIFI READ_MDNS host=<hostname>` | Implemented | Resolve an mDNS hostname on the connected network |
 | `WIFI PROMISCUOUS <ENTER|EXIT|SURVEY|WATCH|WATCH_STOP>` | Implemented | Enter passive capture mode and run RF observation commands |
+| `WIFI BEACON <START\|STOP> [channel=<1-13>] [duration_ms=<ms>]` | Implemented | Broadcast preset fake beacon SSIDs (idle mode only, ≤60 s, low TX power) |
 | `SEND <payload>` | Stub | Reserved, not implemented |
 | `QUERY <request>` | Stub | Reserved, not implemented |
 
@@ -453,6 +454,73 @@ Usage for the subtree root:
 
 ```text
 ERR USAGE WIFI PROMISCUOUS <ENTER|EXIT|SURVEY|WATCH|WATCH_STOP>
+```
+
+### `WIFI BEACON <START|STOP>`
+
+Broadcasts a fixed pack of 8 preset fake beacon SSIDs (e.g. "FBI Surveillance Van", "Pretty Fly for a WiFi") using raw 802.11 frame injection. Requires WiFi to be in idle mode (not connected and not in promiscuous mode). TX power is capped at ~8 dBm and duration is capped at 60 seconds.
+
+The beacons use locally-administered MAC addresses (first octet `0x02`) so they are clearly distinguishable from real hardware.
+
+#### `WIFI BEACON START`
+
+Request:
+
+```text
+WIFI BEACON START [channel=<1-13>] [duration_ms=<ms>]
+```
+
+Defaults: `channel=6`, `duration_ms=30000`.
+
+Immediate response on success (before task starts):
+
+_(no immediate ACK — `BEACON_STARTED` is emitted by the background task)_
+
+Asynchronous responses:
+
+```text
+BEACON_STARTED channel=<n> ssids=<count> duration_ms=<ms>
+...beacons are broadcast in background...
+BEACON_DONE channel=<n> ssids=<count> duration_ms=<actual_ms>
+```
+
+Error responses:
+
+```text
+ERR WIFI_MODE_CONFLICT
+ERR WIFI_BEACON_BUSY
+ERR WIFI_BEACON_FAILED
+ERR USAGE WIFI BEACON START [channel=<1-13>] [duration_ms=<ms>]
+```
+
+Example:
+
+```text
+WIFI BEACON START channel=6 duration_ms=20000
+BEACON_STARTED channel=6 ssids=8 duration_ms=20000
+...20 seconds later...
+BEACON_DONE channel=6 ssids=8 duration_ms=20003
+```
+
+#### `WIFI BEACON STOP`
+
+Stops an active beacon session early. The background task emits `BEACON_DONE` once it exits.
+
+Request:
+
+```text
+WIFI BEACON STOP
+```
+
+Response on success:
+
+_(no immediate ACK — `BEACON_DONE` is emitted by the background task shortly after)_
+
+Error responses:
+
+```text
+ERR WIFI_BEACON_NOT_ACTIVE
+ERR WIFI_BEACON_FAILED
 ```
 
 ### `WIFI DISCONNECT`

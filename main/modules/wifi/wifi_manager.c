@@ -167,6 +167,8 @@ const char *wifi_manager_action_to_string(wifi_manager_action_t action)
         return "SURVEYING";
     case WIFI_MANAGER_ACTION_WATCHING:
         return "WATCHING";
+    case WIFI_MANAGER_ACTION_BEACONING:
+        return "BEACONING";
     default:
         return "UNKNOWN";
     }
@@ -195,6 +197,8 @@ const char *wifi_manager_state_to_string(wifi_manager_mode_t mode, wifi_manager_
         return "SURVEYING";
     case WIFI_MANAGER_ACTION_WATCHING:
         return "WATCHING";
+    case WIFI_MANAGER_ACTION_BEACONING:
+        return "BEACONING";
     default:
         break;
     }

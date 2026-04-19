@@ -5,6 +5,7 @@ enum FuseRadioWifiMenuIndex {
     FuseRadioWifiMenuIndexScan,
     FuseRadioWifiMenuIndexConnect,
     FuseRadioWifiMenuIndexPromiscuousTools,
+    FuseRadioWifiMenuIndexFakeBeacons,
 };
 
 static void fuse_radio_scene_wifi_menu_callback(void* context, uint32_t index) {
@@ -40,6 +41,12 @@ void fuse_radio_scene_wifi_menu_on_enter(void* context) {
         FuseRadioWifiMenuIndexPromiscuousTools,
         fuse_radio_scene_wifi_menu_callback,
         app);
+    submenu_add_item(
+        app->submenu,
+        "Fake Beacons",
+        FuseRadioWifiMenuIndexFakeBeacons,
+        fuse_radio_scene_wifi_menu_callback,
+        app);
 
     submenu_set_selected_item(app->submenu, selected);
     view_dispatcher_switch_to_view(app->view_dispatcher, FuseRadioViewSubmenu);
@@ -59,6 +66,8 @@ bool fuse_radio_scene_wifi_menu_on_event(void* context, SceneManagerEvent event)
             scene_manager_next_scene(app->scene_manager, FuseRadioSceneWifiConnectSsid);
         } else if(event.event == FuseRadioWifiMenuIndexPromiscuousTools) {
             scene_manager_next_scene(app->scene_manager, FuseRadioSceneWifiPromiscuousMenu);
+        } else if(event.event == FuseRadioWifiMenuIndexFakeBeacons) {
+            scene_manager_next_scene(app->scene_manager, FuseRadioSceneWifiBeacon);
         }
 
         return true;

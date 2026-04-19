@@ -7,6 +7,7 @@
 
 #include "modules/wifi/connected/connected_command.h"
 #include "modules/wifi/promiscuous/promiscuous_command.h"
+#include "modules/wifi/beacon/beacon_command.h"
 #include "modules/wifi/wifi_manager.h"
 
 #define WIFI_SUBCOMMAND_MAX_LENGTH 32
@@ -68,7 +69,7 @@ bool wifi_command_try_handle(const char *command_line, const command_context_t *
     }
 
     if (command_line[4] == '\0') {
-        command_context_write_line(context, "ERR USAGE WIFI <SCAN|STATUS|CONNECT|DISCONNECT|DISCOVER|HTTP|READ_MDNS|PROMISCUOUS>\n");
+        command_context_write_line(context, "ERR USAGE WIFI <SCAN|STATUS|CONNECT|DISCONNECT|DISCOVER|HTTP|READ_MDNS|PROMISCUOUS|BEACON>\n");
         return true;
     }
 
@@ -130,6 +131,14 @@ bool wifi_command_try_handle(const char *command_line, const command_context_t *
 
     if (strcmp(subcommand_name, "PROMISCUOUS") == 0 || strcmp(subcommand_name, "PROMISC") == 0) {
         if (!wifi_promiscuous_command_try_handle(args, context)) {
+            command_context_write_line(context, "ERR UNKNOWN_WIFI_COMMAND\n");
+        }
+
+        return true;
+    }
+
+    if (strcmp(subcommand_name, "BEACON") == 0) {
+        if (!wifi_beacon_command_try_handle(args, context)) {
             command_context_write_line(context, "ERR UNKNOWN_WIFI_COMMAND\n");
         }
 

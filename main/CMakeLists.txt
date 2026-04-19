@@ -10,6 +10,8 @@ idf_component_register(
         "modules/wifi/connected/wifi_mdns.c"
         "modules/wifi/promiscuous/promiscuous_command.c"
         "modules/wifi/promiscuous/wifi_promiscuous.c"
+        "modules/wifi/beacon/beacon_command.c"
+        "modules/wifi/beacon/wifi_beacon.c"
         "modules/wifi/wifi_command.c"
         "modules/wifi/wifi_manager.c"
         "modules/send/send_command.c"

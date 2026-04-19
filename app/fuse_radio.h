@@ -50,6 +50,7 @@ typedef enum {
     FuseRadioWifiActionExitingPromiscuous,
     FuseRadioWifiActionSurveying,
     FuseRadioWifiActionWatching,
+    FuseRadioWifiActionBeaconing,
 } FuseRadioWifiAction;
 
 typedef struct {
