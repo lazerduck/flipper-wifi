@@ -1,6 +1,7 @@
 #pragma once
 
 #include "fuse_radio.h"
+#include "fuse_radio_ble_scan_view.h"
 #include "fuse_radio_channel_picker_view.h"
 #include "fuse_radio_discover_progress_view.h"
 #include "fuse_radio_discover_result_view.h"
@@ -35,6 +36,7 @@
 #define FUSE_RADIO_MAX_HOST_LEN       63U
 #define FUSE_RADIO_MAX_SAVED_NETWORKS 12U
 #define FUSE_RADIO_WIFI_INFO_SIZE     256U
+#define FUSE_RADIO_BLE_INFO_SIZE      1024U
 #define FUSE_RADIO_HTTP_INFO_SIZE     768U
 #define FUSE_RADIO_MDNS_INFO_SIZE     512U
 #define FUSE_RADIO_PROMISCUOUS_INFO_SIZE 1024U
@@ -52,6 +54,7 @@ typedef enum {
     FuseRadioViewWidget,
     FuseRadioViewSubmenu,
     FuseRadioViewScan,
+    FuseRadioViewBleScan,
     FuseRadioViewTextInput,
     FuseRadioViewChannelPicker,
     FuseRadioViewDiscoverProgress,
@@ -75,6 +78,7 @@ typedef enum {
     FuseRadioRequestNone,
     FuseRadioRequestScan,
     FuseRadioRequestStatus,
+    FuseRadioRequestBleScan,
     FuseRadioRequestConnect,
     FuseRadioRequestDisconnect,
     FuseRadioRequestDiscover,
@@ -98,6 +102,8 @@ typedef enum {
 typedef enum {
     FuseRadioCustomEventModuleDetected = 0x100,
     FuseRadioCustomEventRetryDetection,
+    FuseRadioCustomEventBleScanRefresh,
+    FuseRadioCustomEventBleSaveSelected,
     FuseRadioCustomEventScanRescan,
     FuseRadioCustomEventScanSelect,
     FuseRadioCustomEventConnectSsidDone,
@@ -156,6 +162,7 @@ struct FuseRadioApp {
     Widget* widget;
     Submenu* submenu;
     FuseRadioScanView* scan_view;
+    FuseRadioBleScanView* ble_scan_view;
     TextInput* text_input;
     FuseRadioChannelPickerView* channel_picker_view;
     FuseRadioDiscoverProgressView* discover_progress_view;
@@ -182,6 +189,7 @@ struct FuseRadioApp {
     FuseRadioPromiscuousPreset promiscuous_preset;
     FuseRadioHttpPreset http_preset;
     FuseRadioScanResults scan_results;
+    FuseRadioBleScanResults ble_scan_results;
     FuseRadioDiscoverResults discover_results;
     FuseRadioSurveyResults survey_results;
     FuseRadioWatchSummary watch_summary;
@@ -204,6 +212,7 @@ struct FuseRadioApp {
     char wifi_status_action[24];
     char wifi_status_ssid[FUSE_RADIO_MAX_SSID_LENGTH + 1U];
     char wifi_info_text[FUSE_RADIO_WIFI_INFO_SIZE];
+    char ble_info_text[FUSE_RADIO_BLE_INFO_SIZE];
     char http_title[24];
     char http_info_text[FUSE_RADIO_HTTP_INFO_SIZE];
     char mdns_info_text[FUSE_RADIO_MDNS_INFO_SIZE];
@@ -232,6 +241,7 @@ struct FuseRadioApp {
     bool beacon_stop_pending;
 
     FuseRadioSavedCredential saved_credentials[FUSE_RADIO_MAX_SAVED_NETWORKS];
+    FuseRadioSavedBleResults saved_ble_results;
 
     uint32_t detect_started_at;
     uint32_t last_ping_at;
@@ -245,6 +255,7 @@ struct FuseRadioApp {
     bool insomnia_active;
     bool module_detect_event_sent;
     bool status_dirty;
+    bool ble_dirty;
     bool wifi_info_dirty;
     bool http_dirty;
     bool discover_dirty;
@@ -261,6 +272,8 @@ void fuse_radio_app_stop_session(FuseRadioApp* app);
 void fuse_radio_app_retry_session(FuseRadioApp* app);
 bool fuse_radio_app_send_ping(FuseRadioApp* app);
 bool fuse_radio_app_start_wifi_scan(FuseRadioApp* app);
+bool fuse_radio_app_start_ble_scan(FuseRadioApp* app);
+bool fuse_radio_app_save_selected_ble_device(FuseRadioApp* app);
 bool fuse_radio_app_request_wifi_status(FuseRadioApp* app);
 bool fuse_radio_app_start_wifi_connect(FuseRadioApp* app);
 bool fuse_radio_app_start_wifi_disconnect(FuseRadioApp* app);
@@ -278,6 +291,8 @@ bool fuse_radio_app_stop_wifi_beacon(FuseRadioApp* app);
 void fuse_radio_app_process_rx(FuseRadioApp* app);
 void fuse_radio_app_handle_tick(FuseRadioApp* app);
 void fuse_radio_app_refresh_status_widget(FuseRadioApp* app);
+void fuse_radio_app_refresh_ble_scan_view(FuseRadioApp* app);
+void fuse_radio_app_refresh_saved_ble_view(FuseRadioApp* app);
 void fuse_radio_app_refresh_wifi_info_widget(FuseRadioApp* app);
 void fuse_radio_app_refresh_http_widget(FuseRadioApp* app);
 void fuse_radio_app_refresh_mdns_widget(FuseRadioApp* app);

@@ -44,7 +44,7 @@ ERR UNKNOWN_COMMAND
 | Command | Status | Purpose |
 | --- | --- | --- |
 | `PING` | Implemented | Link test / keepalive |
-| `BLE <SCAN|STATUS|GATT ...>` | Stub | Reserved BLE command family and UI transport scaffold |
+| `BLE <SCAN|STATUS|GATT ...>` | Partial | BLE scan is implemented; status and GATT remain reserved |
 | `WIFI SCAN` | Implemented | Scan nearby APs |
 | `WIFI CONNECT ssid=<ssid> psw=<password>` | Implemented | Start STA connection |
 | `WIFI STATUS` | Implemented | Read current STA state |
@@ -77,30 +77,80 @@ PONG
 
 ### `BLE`
 
-BLE is now a reserved top-level command family so the Flipper UI and UART protocol can grow together.
+BLE is a top-level command family for BLE discovery and later per-device actions.
 
 Current shape:
 
-- `BLE SCAN` is intended to become the base primitive for nearby-device discovery
+- `BLE SCAN` scans nearby BLE advertisers and returns a compact device list
 - `BLE STATUS` is reserved for future BLE mode or activity reporting
 - `BLE GATT ...` is reserved for later per-device inspection flows
 
-Current responses are explicit stubs:
+### `BLE SCAN`
 
-```text
-BLE
-ERR USAGE BLE <SCAN|STATUS|GATT>
-```
+Performs a blocking BLE scan and returns nearby advertisers discovered during the scan window.
+
+Request:
 
 ```text
 BLE SCAN
-ERR BLE_SCAN_NOT_IMPLEMENTED
 ```
+
+Successful response format:
+
+```text
+BLE_SCAN_COUNT <total>
+BLE_DEVICE <mac> RSSI <rssi> ADDR <PUBLIC|RANDOM|PUBLIC_ID|RANDOM_ID|UNKNOWN> CONN <YES|NO> NAME <name|->
+BLE_DEVICE <mac> RSSI <rssi> ADDR <PUBLIC|RANDOM|PUBLIC_ID|RANDOM_ID|UNKNOWN> CONN <YES|NO> NAME <name|->
+...
+BLE_SCAN_DONE
+```
+
+Possible extra line when more devices were seen than the result cap:
+
+```text
+BLE_SCAN_TRUNCATED <remaining_count>
+```
+
+Notes:
+
+- The scan is blocking inside the command handler, similar to `WIFI SCAN`.
+- The current result cap is 20 devices.
+- Duplicate advertisements are filtered and devices are deduplicated by address before output.
+- `CONN YES` means the advertisement type is connectable.
+- `NAME -` means no device name was present in the advertisement payload.
+
+Possible failures:
+
+```text
+ERR BLE_SCAN_BUSY
+ERR BLE_SCAN_TIMEOUT
+ERR BLE_SCAN_NO_MEM
+ERR BLE_SCAN_FAILED
+```
+
+Example:
+
+```text
+BLE SCAN
+BLE_SCAN_COUNT 3
+BLE_DEVICE AA:BB:CC:DD:EE:FF RSSI -54 ADDR RANDOM CONN YES NAME Keyboard K380
+BLE_DEVICE 11:22:33:44:55:66 RSSI -68 ADDR PUBLIC CONN NO NAME -
+BLE_DEVICE 22:33:44:55:66:77 RSSI -72 ADDR RANDOM CONN YES NAME MySensor
+BLE_SCAN_DONE
+```
+
+### `BLE STATUS`
+
+Reserved for future BLE mode or activity reporting.
 
 ```text
 BLE STATUS
 ERR BLE_STATUS_NOT_IMPLEMENTED
 ```
+
+### `BLE GATT ...`
+
+Reserved for future per-device service and characteristic inspection.
 
 ```text
 BLE GATT mac=AA:BB:CC:DD:EE:FF

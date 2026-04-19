@@ -3,21 +3,26 @@
 void fuse_radio_scene_ble_scan_on_enter(void* context) {
     FuseRadioApp* app = context;
 
-    widget_reset(app->widget);
-    widget_add_string_element(app->widget, 64, 6, AlignCenter, AlignTop, FontPrimary, "BLE Scan");
-    widget_add_string_multiline_element(
-        app->widget,
-        64,
-        26,
-        AlignCenter,
-        AlignCenter,
-        FontSecondary,
-        "First BLE slice.\nMenu and protocol are wired.\nScan results will feed\nBLE zoo and device actions.");
-    view_dispatcher_switch_to_view(app->view_dispatcher, FuseRadioViewWidget);
+    fuse_radio_app_start_ble_scan(app);
+    fuse_radio_app_refresh_ble_scan_view(app);
+    view_dispatcher_switch_to_view(app->view_dispatcher, FuseRadioViewBleScan);
 }
 
 bool fuse_radio_scene_ble_scan_on_event(void* context, SceneManagerEvent event) {
     FuseRadioApp* app = context;
+
+    if(event.type == SceneManagerEventTypeCustom && event.event == FuseRadioCustomEventBleScanRefresh) {
+        fuse_radio_app_start_ble_scan(app);
+        fuse_radio_app_refresh_ble_scan_view(app);
+        return true;
+    }
+
+    if(event.type == SceneManagerEventTypeCustom && event.event == FuseRadioCustomEventBleSaveSelected) {
+        if(fuse_radio_app_save_selected_ble_device(app)) {
+            scene_manager_next_scene(app->scene_manager, FuseRadioSceneBleSavedDevices);
+        }
+        return true;
+    }
 
     if(event.type == SceneManagerEventTypeBack) {
         return scene_manager_previous_scene(app->scene_manager);
@@ -28,5 +33,5 @@ bool fuse_radio_scene_ble_scan_on_event(void* context, SceneManagerEvent event) 
 
 void fuse_radio_scene_ble_scan_on_exit(void* context) {
     FuseRadioApp* app = context;
-    widget_reset(app->widget);
+    UNUSED(app);
 }

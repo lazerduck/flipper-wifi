@@ -13,6 +13,10 @@
 #define FUSE_RADIO_DISCOVER_ROLE_SIZE 8U
 #define FUSE_RADIO_DISCOVER_SERVICES_SIZE 24U
 #define FUSE_RADIO_DISCOVER_SUBNET_SIZE 24U
+#define FUSE_RADIO_MAX_BLE_DEVICES 20U
+#define FUSE_RADIO_MAX_SAVED_BLE_DEVICES 20U
+#define FUSE_RADIO_BLE_NAME_SIZE 32U
+#define FUSE_RADIO_BLE_ADDR_TYPE_SIZE 12U
 #define FUSE_RADIO_MAX_WATCH_DEVICES 12U
 #define FUSE_RADIO_MAX_SURVEY_CHANNELS 14U
 
@@ -111,6 +115,41 @@ typedef struct {
     bool has_error;
     char error[FUSE_RADIO_SCAN_ERROR_SIZE];
 } FuseRadioDiscoverResults;
+
+typedef struct {
+    char mac[18];
+    char name[FUSE_RADIO_BLE_NAME_SIZE];
+    char addr_type[FUSE_RADIO_BLE_ADDR_TYPE_SIZE];
+    int16_t rssi;
+    bool has_name;
+    bool connectable;
+} FuseRadioBleDevice;
+
+typedef struct {
+    FuseRadioBleDevice devices[FUSE_RADIO_MAX_BLE_DEVICES];
+    uint8_t count;
+    uint16_t total_count;
+    uint16_t truncated_count;
+    bool active;
+    bool complete;
+    bool has_error;
+    char error[FUSE_RADIO_SCAN_ERROR_SIZE];
+} FuseRadioBleScanResults;
+
+typedef struct {
+    char mac[18];
+    char name[FUSE_RADIO_BLE_NAME_SIZE];
+    char addr_type[FUSE_RADIO_BLE_ADDR_TYPE_SIZE];
+    int16_t last_rssi;
+    bool has_name;
+    bool connectable;
+    bool seen_recently;
+} FuseRadioSavedBleDevice;
+
+typedef struct {
+    FuseRadioSavedBleDevice devices[FUSE_RADIO_MAX_SAVED_BLE_DEVICES];
+    uint8_t count;
+} FuseRadioSavedBleResults;
 
 typedef struct {
     char mac[18];

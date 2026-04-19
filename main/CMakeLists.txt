@@ -3,6 +3,7 @@ idf_component_register(
         "main.c"
         "command/command_router.c"
         "modules/ble/ble_command.c"
+        "modules/ble/ble_manager.c"
         "modules/status_led/status_led.c"
         "modules/ping/ping_command.c"
         "modules/wifi/connected/connected_command.c"
@@ -18,4 +19,4 @@ idf_component_register(
         "modules/send/send_command.c"
         "modules/query/query_command.c"
     INCLUDE_DIRS "."
-    REQUIRES esp_driver_gpio esp_driver_rmt esp_driver_uart esp_event esp_http_client esp_netif esp_timer esp_wifi lwip nvs_flash)
+    REQUIRES bt esp_driver_gpio esp_driver_rmt esp_driver_uart esp_event esp_http_client esp_netif esp_timer esp_wifi lwip nvs_flash)
