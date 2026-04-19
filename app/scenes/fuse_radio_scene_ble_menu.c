@@ -38,7 +38,7 @@ bool fuse_radio_scene_ble_menu_on_event(void* context, SceneManagerEvent event) 
         scene_manager_set_scene_state(app->scene_manager, FuseRadioSceneBleMenu, event.event);
 
         if(event.event == FuseRadioBleMenuIndexScan) {
-            scene_manager_next_scene(app->scene_manager, FuseRadioSceneBleScan);
+            scene_manager_next_scene(app->scene_manager, FuseRadioSceneBleScanPreset);
         } else if(event.event == FuseRadioBleMenuIndexSavedDevices) {
             scene_manager_next_scene(app->scene_manager, FuseRadioSceneBleSavedDevices);
         }

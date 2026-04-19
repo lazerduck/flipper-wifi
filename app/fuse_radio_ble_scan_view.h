@@ -12,7 +12,7 @@ typedef enum {
 
 typedef enum {
     FuseRadioBleScanViewActionRefresh,
-    FuseRadioBleScanViewActionSave,
+    FuseRadioBleScanViewActionSelect,
 } FuseRadioBleScanViewAction;
 
 typedef void (*FuseRadioBleScanViewCallback)(FuseRadioBleScanViewAction action, void* context);

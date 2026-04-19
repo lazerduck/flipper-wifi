@@ -103,7 +103,7 @@ typedef enum {
     FuseRadioCustomEventModuleDetected = 0x100,
     FuseRadioCustomEventRetryDetection,
     FuseRadioCustomEventBleScanRefresh,
-    FuseRadioCustomEventBleSaveSelected,
+    FuseRadioCustomEventBleSelectDevice,
     FuseRadioCustomEventScanRescan,
     FuseRadioCustomEventScanSelect,
     FuseRadioCustomEventConnectSsidDone,
@@ -147,10 +147,21 @@ typedef enum {
     FuseRadioPromiscuousPresetWatchChannel,
 } FuseRadioPromiscuousPreset;
 
+typedef enum {
+    FuseRadioBleScanModeNormal,
+    FuseRadioBleScanModeDeep,
+} FuseRadioBleScanMode;
+
 typedef struct {
     char ssid[FUSE_RADIO_MAX_SSID_LENGTH + 1U];
     char password[FUSE_RADIO_MAX_PASSWORD_LEN + 1U];
 } FuseRadioSavedCredential;
+
+typedef struct {
+    FuseRadioBleDevice device;
+    bool is_saved;
+    bool seen_recently;
+} FuseRadioBleSelection;
 
 #include "fuse_radio_scan_view.h"
 
@@ -242,7 +253,10 @@ struct FuseRadioApp {
 
     FuseRadioSavedCredential saved_credentials[FUSE_RADIO_MAX_SAVED_NETWORKS];
     FuseRadioSavedBleResults saved_ble_results;
+    FuseRadioBleSelection ble_selection;
+    FuseRadioBleScanMode ble_scan_mode;
 
+    uint32_t ble_scan_started_at;
     uint32_t detect_started_at;
     uint32_t last_ping_at;
     uint32_t last_mode_guard_poll_at;
@@ -273,7 +287,12 @@ void fuse_radio_app_retry_session(FuseRadioApp* app);
 bool fuse_radio_app_send_ping(FuseRadioApp* app);
 bool fuse_radio_app_start_wifi_scan(FuseRadioApp* app);
 bool fuse_radio_app_start_ble_scan(FuseRadioApp* app);
+void fuse_radio_app_set_ble_scan_mode(FuseRadioApp* app, FuseRadioBleScanMode mode);
+FuseRadioBleScanMode fuse_radio_app_get_ble_scan_mode(FuseRadioApp* app);
+bool fuse_radio_app_select_ble_scan_device(FuseRadioApp* app);
+bool fuse_radio_app_select_saved_ble_device(FuseRadioApp* app);
 bool fuse_radio_app_save_selected_ble_device(FuseRadioApp* app);
+bool fuse_radio_app_remove_selected_ble_device(FuseRadioApp* app);
 bool fuse_radio_app_request_wifi_status(FuseRadioApp* app);
 bool fuse_radio_app_start_wifi_connect(FuseRadioApp* app);
 bool fuse_radio_app_start_wifi_disconnect(FuseRadioApp* app);
@@ -293,6 +312,7 @@ void fuse_radio_app_handle_tick(FuseRadioApp* app);
 void fuse_radio_app_refresh_status_widget(FuseRadioApp* app);
 void fuse_radio_app_refresh_ble_scan_view(FuseRadioApp* app);
 void fuse_radio_app_refresh_saved_ble_view(FuseRadioApp* app);
+void fuse_radio_app_refresh_ble_info_widget(FuseRadioApp* app);
 void fuse_radio_app_refresh_wifi_info_widget(FuseRadioApp* app);
 void fuse_radio_app_refresh_http_widget(FuseRadioApp* app);
 void fuse_radio_app_refresh_mdns_widget(FuseRadioApp* app);

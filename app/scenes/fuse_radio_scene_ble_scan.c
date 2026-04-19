@@ -17,9 +17,9 @@ bool fuse_radio_scene_ble_scan_on_event(void* context, SceneManagerEvent event) 
         return true;
     }
 
-    if(event.type == SceneManagerEventTypeCustom && event.event == FuseRadioCustomEventBleSaveSelected) {
-        if(fuse_radio_app_save_selected_ble_device(app)) {
-            scene_manager_next_scene(app->scene_manager, FuseRadioSceneBleSavedDevices);
+    if(event.type == SceneManagerEventTypeCustom && event.event == FuseRadioCustomEventBleSelectDevice) {
+        if(fuse_radio_app_select_ble_scan_device(app)) {
+            scene_manager_next_scene(app->scene_manager, FuseRadioSceneBleDeviceActions);
         }
         return true;
     }

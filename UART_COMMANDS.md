@@ -92,15 +92,16 @@ Performs a blocking BLE scan and returns nearby advertisers discovered during th
 Request:
 
 ```text
-BLE SCAN
+BLE SCAN [duration_ms]
 ```
 
 Successful response format:
 
 ```text
+BLE_SCAN_START <duration_ms>
 BLE_SCAN_COUNT <total>
-BLE_DEVICE <mac> RSSI <rssi> ADDR <PUBLIC|RANDOM|PUBLIC_ID|RANDOM_ID|UNKNOWN> CONN <YES|NO> NAME <name|->
-BLE_DEVICE <mac> RSSI <rssi> ADDR <PUBLIC|RANDOM|PUBLIC_ID|RANDOM_ID|UNKNOWN> CONN <YES|NO> NAME <name|->
+BLE_DEVICE <mac> RSSI <rssi> COMPANY <company|-> APPEAR <appearance|-> CLASS <class> PROX <Close|Near|Room|Far> ADDR <PUBLIC|RANDOM|PUBLIC_ID|RANDOM_ID|UNKNOWN> CONN <YES|NO> NAME <name|->
+BLE_DEVICE <mac> RSSI <rssi> COMPANY <company|-> APPEAR <appearance|-> CLASS <class> PROX <Close|Near|Room|Far> ADDR <PUBLIC|RANDOM|PUBLIC_ID|RANDOM_ID|UNKNOWN> CONN <YES|NO> NAME <name|->
 ...
 BLE_SCAN_DONE
 ```
@@ -114,8 +115,15 @@ BLE_SCAN_TRUNCATED <remaining_count>
 Notes:
 
 - The scan is blocking inside the command handler, similar to `WIFI SCAN`.
+- `BLE_SCAN_START` is emitted immediately so the Flipper UI can show timed progress during the blocking scan window.
 - The current result cap is 20 devices.
+- `duration_ms` is optional. If omitted, the firmware uses its default BLE scan window.
+- The Flipper app currently offers `Normal` at 5 seconds and `Deep` at 30 seconds.
 - Duplicate advertisements are filtered and devices are deduplicated by address before output.
+- `COMPANY` is a compact company label derived from manufacturer data when present; otherwise `-`.
+- `APPEAR` is a compact appearance label derived from the standard BLE appearance field when present; otherwise `-`.
+- `CLASS` is a user-facing coarse classification inferred from beacon signatures, appearance, manufacturer hints, name fragments, and advertised services.
+- `PROX` is a rough proximity bucket derived from RSSI and TX power when available, otherwise from RSSI alone.
 - `CONN YES` means the advertisement type is connectable.
 - `NAME -` means no device name was present in the advertisement payload.
 
@@ -133,9 +141,9 @@ Example:
 ```text
 BLE SCAN
 BLE_SCAN_COUNT 3
-BLE_DEVICE AA:BB:CC:DD:EE:FF RSSI -54 ADDR RANDOM CONN YES NAME Keyboard K380
-BLE_DEVICE 11:22:33:44:55:66 RSSI -68 ADDR PUBLIC CONN NO NAME -
-BLE_DEVICE 22:33:44:55:66:77 RSSI -72 ADDR RANDOM CONN YES NAME MySensor
+BLE_DEVICE AA:BB:CC:DD:EE:FF RSSI -54 COMPANY Apple APPEAR Watch CLASS Personal PROX Close ADDR RANDOM CONN YES NAME Keyboard K380
+BLE_DEVICE 11:22:33:44:55:66 RSSI -68 COMPANY - APPEAR Tag CLASS Tracker PROX Room ADDR PUBLIC CONN NO NAME -
+BLE_DEVICE 22:33:44:55:66:77 RSSI -72 COMPANY Google APPEAR Sensor CLASS Sensor PROX Near ADDR RANDOM CONN YES NAME MySensor
 BLE_SCAN_DONE
 ```
 

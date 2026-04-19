@@ -17,6 +17,10 @@
 #define FUSE_RADIO_MAX_SAVED_BLE_DEVICES 20U
 #define FUSE_RADIO_BLE_NAME_SIZE 32U
 #define FUSE_RADIO_BLE_ADDR_TYPE_SIZE 12U
+#define FUSE_RADIO_BLE_COMPANY_SIZE 20U
+#define FUSE_RADIO_BLE_APPEARANCE_SIZE 18U
+#define FUSE_RADIO_BLE_CLASS_SIZE 16U
+#define FUSE_RADIO_BLE_PROXIMITY_SIZE 10U
 #define FUSE_RADIO_MAX_WATCH_DEVICES 12U
 #define FUSE_RADIO_MAX_SURVEY_CHANNELS 14U
 
@@ -120,8 +124,14 @@ typedef struct {
     char mac[18];
     char name[FUSE_RADIO_BLE_NAME_SIZE];
     char addr_type[FUSE_RADIO_BLE_ADDR_TYPE_SIZE];
+    char company[FUSE_RADIO_BLE_COMPANY_SIZE];
+    char appearance[FUSE_RADIO_BLE_APPEARANCE_SIZE];
+    char classification[FUSE_RADIO_BLE_CLASS_SIZE];
+    char proximity[FUSE_RADIO_BLE_PROXIMITY_SIZE];
     int16_t rssi;
     bool has_name;
+    bool has_company;
+    bool has_appearance;
     bool connectable;
 } FuseRadioBleDevice;
 
@@ -130,6 +140,8 @@ typedef struct {
     uint8_t count;
     uint16_t total_count;
     uint16_t truncated_count;
+    uint16_t scan_duration_ms;
+    uint8_t progress_percent;
     bool active;
     bool complete;
     bool has_error;
@@ -140,8 +152,14 @@ typedef struct {
     char mac[18];
     char name[FUSE_RADIO_BLE_NAME_SIZE];
     char addr_type[FUSE_RADIO_BLE_ADDR_TYPE_SIZE];
+    char company[FUSE_RADIO_BLE_COMPANY_SIZE];
+    char appearance[FUSE_RADIO_BLE_APPEARANCE_SIZE];
+    char classification[FUSE_RADIO_BLE_CLASS_SIZE];
+    char proximity[FUSE_RADIO_BLE_PROXIMITY_SIZE];
     int16_t last_rssi;
     bool has_name;
+    bool has_company;
+    bool has_appearance;
     bool connectable;
     bool seen_recently;
 } FuseRadioSavedBleDevice;

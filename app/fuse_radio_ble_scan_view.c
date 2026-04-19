@@ -105,13 +105,63 @@ static void fuse_radio_ble_scan_view_draw_badge(
     canvas_set_color(canvas, ColorBlack);
 }
 
+static const char* fuse_radio_ble_scan_view_title_for_device(
+    const FuseRadioBleDevice* device,
+    char* buffer,
+    size_t buffer_size) {
+    if(device->has_name) {
+        return device->name;
+    }
+
+    if(device->has_appearance) {
+        return device->appearance;
+    }
+
+    if(device->has_company) {
+        snprintf(buffer, buffer_size, "%s BLE", device->company);
+        return buffer;
+    }
+
+    if(device->classification[0]) {
+        return device->classification;
+    }
+
+    return "Nearby BLE";
+}
+
+static const char* fuse_radio_ble_scan_view_title_for_saved(
+    const FuseRadioSavedBleDevice* device,
+    char* buffer,
+    size_t buffer_size) {
+    if(device->has_name) {
+        return device->name;
+    }
+
+    if(device->has_appearance) {
+        return device->appearance;
+    }
+
+    if(device->has_company) {
+        snprintf(buffer, buffer_size, "%s BLE", device->company);
+        return buffer;
+    }
+
+    if(device->classification[0]) {
+        return device->classification;
+    }
+
+    return "Saved BLE";
+}
+
 static void fuse_radio_ble_scan_view_draw_scan_card(
     Canvas* canvas,
     const FuseRadioBleScanResults* results,
     uint8_t selected_index) {
     const FuseRadioBleDevice* device = &results->devices[selected_index];
     char primary[20];
-    char detail[32];
+    char title[20];
+    char detail[24];
+    char detail2[24];
     char counter[18];
     char rssi[18];
 
@@ -120,20 +170,25 @@ static void fuse_radio_ble_scan_view_draw_scan_card(
     fuse_radio_ble_scan_view_copy_fit(
         primary,
         sizeof(primary),
-        device->has_name ? device->name : "Unnamed BLE",
+        fuse_radio_ble_scan_view_title_for_device(device, title, sizeof(title)),
         16U);
     canvas_draw_str(canvas, 8, 28, primary);
 
     canvas_set_font(canvas, FontSecondary);
-    fuse_radio_ble_scan_view_copy_fit(detail, sizeof(detail), device->mac, 17U);
-    canvas_draw_str(canvas, 8, 39, detail);
     snprintf(
         detail,
         sizeof(detail),
         "%s  %s",
-        device->addr_type,
-        device->connectable ? "connect" : "bcast");
-    canvas_draw_str(canvas, 8, 50, detail);
+        device->classification[0] ? device->classification : "BLE",
+        device->has_company ? device->company : "unknown");
+    canvas_draw_str(canvas, 8, 39, detail);
+    snprintf(
+        detail2,
+        sizeof(detail2),
+        "%s  %s",
+        device->proximity[0] ? device->proximity : "Far",
+        device->has_appearance ? device->appearance : (device->connectable ? "ready" : "seen"));
+    canvas_draw_str(canvas, 8, 50, detail2);
 
     snprintf(rssi, sizeof(rssi), "%d dBm", device->rssi);
     canvas_draw_str(canvas, 78, 50, rssi);
@@ -148,7 +203,9 @@ static void fuse_radio_ble_scan_view_draw_saved_card(
     uint8_t selected_index) {
     const FuseRadioSavedBleDevice* device = &results->devices[selected_index];
     char primary[20];
-    char detail[32];
+    char title[20];
+    char detail[24];
+    char detail2[24];
     char counter[18];
 
     canvas_draw_rframe(canvas, 4, 17, 120, 38, 2);
@@ -156,20 +213,25 @@ static void fuse_radio_ble_scan_view_draw_saved_card(
     fuse_radio_ble_scan_view_copy_fit(
         primary,
         sizeof(primary),
-        device->has_name ? device->name : "Saved BLE",
+        fuse_radio_ble_scan_view_title_for_saved(device, title, sizeof(title)),
         16U);
     canvas_draw_str(canvas, 8, 28, primary);
 
     canvas_set_font(canvas, FontSecondary);
-    fuse_radio_ble_scan_view_copy_fit(detail, sizeof(detail), device->mac, 17U);
-    canvas_draw_str(canvas, 8, 39, detail);
     snprintf(
         detail,
         sizeof(detail),
         "%s  %s",
-        device->addr_type,
-        device->connectable ? "connect" : "bcast");
-    canvas_draw_str(canvas, 8, 50, detail);
+        device->classification[0] ? device->classification : "BLE",
+        device->has_company ? device->company : "saved");
+    canvas_draw_str(canvas, 8, 39, detail);
+    snprintf(
+        detail2,
+        sizeof(detail2),
+        "%s  %s",
+        device->proximity[0] ? device->proximity : (device->seen_recently ? "Near" : "saved"),
+        device->has_appearance ? device->appearance : (device->seen_recently ? "live" : "stored"));
+    canvas_draw_str(canvas, 8, 50, detail2);
     snprintf(counter, sizeof(counter), "%u/%u", (unsigned)(selected_index + 1U), (unsigned)results->count);
     canvas_draw_str(canvas, 92, 39, counter);
 
@@ -178,6 +240,49 @@ static void fuse_radio_ble_scan_view_draw_saved_card(
         fuse_radio_ble_scan_view_draw_signal(canvas, device->last_rssi);
     } else {
         fuse_radio_ble_scan_view_draw_badge(canvas, 92, 19, "SAVED");
+    }
+}
+
+static void fuse_radio_ble_scan_view_draw_progress(
+    Canvas* canvas,
+    const FuseRadioBleScanResults* results,
+    uint8_t animation_phase) {
+    char line[32];
+    char detail[32];
+    char detail2[32];
+    char percent[8];
+    const uint8_t fill_width = (uint8_t)((108U * results->progress_percent) / 100U);
+    const uint16_t duration_ms = results->scan_duration_ms ? results->scan_duration_ms : 4500U;
+
+    snprintf(percent, sizeof(percent), "%u%%", (unsigned)results->progress_percent);
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str(canvas, 95, 25, percent);
+
+    canvas_draw_rframe(canvas, 9, 31, 110, 11, 2);
+    if(fill_width > 0U) {
+        canvas_draw_box(canvas, 10, 32, fill_width, 9);
+    }
+
+    canvas_set_font(canvas, FontSecondary);
+    snprintf(
+        line,
+        sizeof(line),
+        "Window %u.%us  Seen %u",
+        (unsigned)(duration_ms / 1000U),
+        (unsigned)((duration_ms % 1000U) / 100U),
+        (unsigned)results->count);
+    canvas_draw_str(canvas, 8, 49, line);
+
+    snprintf(
+        detail,
+        sizeof(detail),
+        "%s nearby advertisers",
+        fuse_radio_ble_scan_view_scanning_text(animation_phase));
+    canvas_draw_str(canvas, 8, 60, detail);
+
+    if(results->count > 0U) {
+        snprintf(detail2, sizeof(detail2), "Results after scan");
+        canvas_draw_str(canvas, 8, 24, detail2);
     }
 }
 
@@ -206,6 +311,7 @@ static void fuse_radio_ble_scan_view_draw_callback(Canvas* canvas, void* model) 
 
         fuse_radio_ble_scan_view_draw_saved_card(
             canvas, &view_model->saved_results, view_model->selected_index);
+        elements_button_center(canvas, "Menu");
         return;
     }
 
@@ -234,14 +340,9 @@ static void fuse_radio_ble_scan_view_draw_callback(Canvas* canvas, void* model) 
         return;
     }
 
-    if(view_model->scan_results.active && view_model->scan_results.count == 0U) {
-        elements_multiline_text_aligned(
-            canvas,
-            64,
-            30,
-            AlignCenter,
-            AlignCenter,
-            "Listening for nearby\nBLE advertisers");
+    if(view_model->scan_results.active) {
+        fuse_radio_ble_scan_view_draw_progress(
+            canvas, &view_model->scan_results, view_model->animation_phase);
         return;
     }
 
@@ -254,7 +355,8 @@ static void fuse_radio_ble_scan_view_draw_callback(Canvas* canvas, void* model) 
 
     fuse_radio_ble_scan_view_draw_scan_card(
         canvas, &view_model->scan_results, view_model->selected_index);
-    elements_button_center(canvas, "Save");
+    elements_button_left(canvas, "Again");
+    elements_button_center(canvas, "Menu");
 }
 
 static bool fuse_radio_ble_scan_view_input_callback(InputEvent* event, void* context) {
@@ -275,16 +377,22 @@ static bool fuse_radio_ble_scan_view_input_callback(InputEvent* event, void* con
                 model->mode == FuseRadioBleScanViewModeSaved ? model->saved_results.count :
                                                              model->scan_results.count;
 
-            if(event->key == InputKeyUp && model->selected_index > 0U) {
+            if(model->mode == FuseRadioBleScanViewModeScan && model->scan_results.active) {
+                consumed = false;
+            } else if(event->key == InputKeyUp && model->selected_index > 0U) {
                 model->selected_index--;
                 consumed = true;
             } else if(event->key == InputKeyDown && (model->selected_index + 1U) < count) {
                 model->selected_index++;
                 consumed = true;
-            } else if(event->key == InputKeyOk && model->mode == FuseRadioBleScanViewModeScan) {
+            } else if(event->key == InputKeyLeft && model->mode == FuseRadioBleScanViewModeScan) {
                 consumed = true;
                 trigger_action = true;
-                action = count > 0U ? FuseRadioBleScanViewActionSave :
+                action = FuseRadioBleScanViewActionRefresh;
+            } else if(event->key == InputKeyOk) {
+                consumed = true;
+                trigger_action = true;
+                action = count > 0U ? FuseRadioBleScanViewActionSelect :
                                       FuseRadioBleScanViewActionRefresh;
             }
         },

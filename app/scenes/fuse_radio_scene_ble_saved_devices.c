@@ -10,6 +10,13 @@ void fuse_radio_scene_ble_saved_devices_on_enter(void* context) {
 bool fuse_radio_scene_ble_saved_devices_on_event(void* context, SceneManagerEvent event) {
     FuseRadioApp* app = context;
 
+    if(event.type == SceneManagerEventTypeCustom && event.event == FuseRadioCustomEventBleSelectDevice) {
+        if(fuse_radio_app_select_saved_ble_device(app)) {
+            scene_manager_next_scene(app->scene_manager, FuseRadioSceneBleDeviceActions);
+        }
+        return true;
+    }
+
     if(event.type == SceneManagerEventTypeBack) {
         return scene_manager_previous_scene(app->scene_manager);
     }

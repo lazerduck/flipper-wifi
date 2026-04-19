@@ -14,7 +14,9 @@
 #define FUSE_RADIO_CREDENTIALS_VERSION 1U
 #define FUSE_RADIO_BLE_DEVICES_PATH APP_DATA_PATH("fuse_radio/ble_devices.fff")
 #define FUSE_RADIO_BLE_DEVICES_FILETYPE "Fuse Radio BLE Devices"
-#define FUSE_RADIO_BLE_DEVICES_VERSION 1U
+#define FUSE_RADIO_BLE_DEVICES_VERSION 2U
+#define FUSE_RADIO_BLE_SCAN_NORMAL_DURATION_MS 5000U
+#define FUSE_RADIO_BLE_SCAN_DEEP_DURATION_MS   30000U
 
 static size_t fuse_radio_app_strlcpy(char* dst, const char* src, size_t size) {
     const size_t length = strlen(src);
@@ -50,6 +52,11 @@ static int32_t fuse_radio_app_find_saved_ble_device_index(FuseRadioApp* app, con
     }
 
     return -1;
+}
+
+static uint16_t fuse_radio_app_ble_scan_duration_ms(FuseRadioApp* app) {
+    return app->ble_scan_mode == FuseRadioBleScanModeDeep ? FUSE_RADIO_BLE_SCAN_DEEP_DURATION_MS :
+                                                            FUSE_RADIO_BLE_SCAN_NORMAL_DURATION_MS;
 }
 
 static bool fuse_radio_app_save_credentials(FuseRadioApp* app) {
@@ -120,10 +127,20 @@ static bool fuse_radio_app_save_ble_devices(FuseRadioApp* app) {
         for(uint8_t index = 0U; index < app->saved_ble_results.count; index++) {
             const FuseRadioSavedBleDevice* device = &app->saved_ble_results.devices[index];
             const char* name = device->has_name ? device->name : "-";
+            const char* company = device->has_company ? device->company : "-";
+            const char* appearance = device->has_appearance ? device->appearance : "-";
             const char* connectable = device->connectable ? "YES" : "NO";
 
             if(!flipper_format_write_string_cstr(app->credentials_format, "MAC", device->mac) ||
                !flipper_format_write_string_cstr(app->credentials_format, "Name", name) ||
+               !flipper_format_write_string_cstr(
+                   app->credentials_format, "Company", company) ||
+               !flipper_format_write_string_cstr(
+                   app->credentials_format, "Appearance", appearance) ||
+               !flipper_format_write_string_cstr(
+                   app->credentials_format, "Class", device->classification) ||
+               !flipper_format_write_string_cstr(
+                   app->credentials_format, "Proximity", device->proximity) ||
                !flipper_format_write_string_cstr(
                    app->credentials_format, "AddrType", device->addr_type) ||
                !flipper_format_write_string_cstr(
@@ -214,6 +231,10 @@ static void fuse_radio_app_load_ble_devices(FuseRadioApp* app) {
     FuriString* filetype = furi_string_alloc();
     FuriString* mac = furi_string_alloc();
     FuriString* name = furi_string_alloc();
+    FuriString* company = furi_string_alloc();
+    FuriString* appearance = furi_string_alloc();
+    FuriString* classification = furi_string_alloc();
+    FuriString* proximity = furi_string_alloc();
     FuriString* addr_type = furi_string_alloc();
     FuriString* connectable = furi_string_alloc();
     uint32_t version = 0U;
@@ -223,8 +244,8 @@ static void fuse_radio_app_load_ble_devices(FuseRadioApp* app) {
             break;
         }
 
-        if((strcmp(furi_string_get_cstr(filetype), FUSE_RADIO_BLE_DEVICES_FILETYPE) != 0) ||
-           (version != FUSE_RADIO_BLE_DEVICES_VERSION)) {
+          if((strcmp(furi_string_get_cstr(filetype), FUSE_RADIO_BLE_DEVICES_FILETYPE) != 0) ||
+              (version != 1U && version != FUSE_RADIO_BLE_DEVICES_VERSION)) {
             break;
         }
 
@@ -233,8 +254,22 @@ static void fuse_radio_app_load_ble_devices(FuseRadioApp* app) {
                 break;
             }
 
-            if(!flipper_format_read_string(app->credentials_format, "Name", name) ||
-               !flipper_format_read_string(app->credentials_format, "AddrType", addr_type) ||
+            if(!flipper_format_read_string(app->credentials_format, "Name", name)) {
+                break;
+            }
+
+            if(version >= FUSE_RADIO_BLE_DEVICES_VERSION) {
+                if(!flipper_format_read_string(app->credentials_format, "Company", company) ||
+                   !flipper_format_read_string(app->credentials_format, "Appearance", appearance) ||
+                   !flipper_format_read_string(
+                       app->credentials_format, "Class", classification) ||
+                   !flipper_format_read_string(
+                       app->credentials_format, "Proximity", proximity)) {
+                    break;
+                }
+            }
+
+            if(!flipper_format_read_string(app->credentials_format, "AddrType", addr_type) ||
                !flipper_format_read_string(app->credentials_format, "Connectable", connectable)) {
                 break;
             }
@@ -250,6 +285,30 @@ static void fuse_radio_app_load_ble_devices(FuseRadioApp* app) {
             if(device->has_name) {
                 fuse_radio_app_strlcpy(device->name, furi_string_get_cstr(name), sizeof(device->name));
             }
+            if(version >= FUSE_RADIO_BLE_DEVICES_VERSION) {
+                device->has_company = strcmp(furi_string_get_cstr(company), "-") != 0;
+                if(device->has_company) {
+                    fuse_radio_app_strlcpy(
+                        device->company,
+                        furi_string_get_cstr(company),
+                        sizeof(device->company));
+                }
+                device->has_appearance = strcmp(furi_string_get_cstr(appearance), "-") != 0;
+                if(device->has_appearance) {
+                    fuse_radio_app_strlcpy(
+                        device->appearance,
+                        furi_string_get_cstr(appearance),
+                        sizeof(device->appearance));
+                }
+                fuse_radio_app_strlcpy(
+                    device->classification,
+                    furi_string_get_cstr(classification),
+                    sizeof(device->classification));
+                fuse_radio_app_strlcpy(
+                    device->proximity,
+                    furi_string_get_cstr(proximity),
+                    sizeof(device->proximity));
+            }
             device->last_rssi = -127;
             device->seen_recently = false;
         }
@@ -257,6 +316,10 @@ static void fuse_radio_app_load_ble_devices(FuseRadioApp* app) {
 
     furi_string_free(connectable);
     furi_string_free(addr_type);
+    furi_string_free(proximity);
+    furi_string_free(classification);
+    furi_string_free(appearance);
+    furi_string_free(company);
     furi_string_free(name);
     furi_string_free(mac);
     furi_string_free(filetype);
@@ -280,11 +343,25 @@ static void fuse_radio_app_touch_saved_ble_device(FuseRadioApp* app, const FuseR
     fuse_radio_app_strlcpy(saved->addr_type, device->addr_type, sizeof(saved->addr_type));
     saved->connectable = device->connectable;
     saved->has_name = device->has_name;
+    saved->has_company = device->has_company;
+    saved->has_appearance = device->has_appearance;
     if(device->has_name) {
         fuse_radio_app_strlcpy(saved->name, device->name, sizeof(saved->name));
     } else {
         saved->name[0] = '\0';
     }
+    if(device->has_company) {
+        fuse_radio_app_strlcpy(saved->company, device->company, sizeof(saved->company));
+    } else {
+        saved->company[0] = '\0';
+    }
+    if(device->has_appearance) {
+        fuse_radio_app_strlcpy(saved->appearance, device->appearance, sizeof(saved->appearance));
+    } else {
+        saved->appearance[0] = '\0';
+    }
+    fuse_radio_app_strlcpy(saved->classification, device->classification, sizeof(saved->classification));
+    fuse_radio_app_strlcpy(saved->proximity, device->proximity, sizeof(saved->proximity));
     saved->last_rssi = device->rssi;
     saved->seen_recently = true;
 }
@@ -404,9 +481,9 @@ static void fuse_radio_app_ble_scan_view_callback(
     if(action == FuseRadioBleScanViewActionRefresh) {
         view_dispatcher_send_custom_event(
             app->view_dispatcher, FuseRadioCustomEventBleScanRefresh);
-    } else if(action == FuseRadioBleScanViewActionSave) {
+    } else if(action == FuseRadioBleScanViewActionSelect) {
         view_dispatcher_send_custom_event(
-            app->view_dispatcher, FuseRadioCustomEventBleSaveSelected);
+            app->view_dispatcher, FuseRadioCustomEventBleSelectDevice);
     }
 }
 
@@ -575,7 +652,9 @@ static void fuse_radio_app_reset_scan_results(FuseRadioApp* app) {
 
 static void fuse_radio_app_reset_ble_scan_results(FuseRadioApp* app) {
     memset(&app->ble_scan_results, 0, sizeof(app->ble_scan_results));
+    app->ble_scan_results.scan_duration_ms = fuse_radio_app_ble_scan_duration_ms(app);
     app->ble_info_text[0] = '\0';
+    app->ble_scan_started_at = 0U;
     app->ble_dirty = true;
 }
 
@@ -697,6 +776,28 @@ static void fuse_radio_app_reset_discover_results(FuseRadioApp* app) {
     app->discover_dirty = true;
 }
 
+static void fuse_radio_app_update_ble_scan_progress(FuseRadioApp* app) {
+    if(!app->ble_scan_results.active || app->ble_scan_results.scan_duration_ms == 0U ||
+       app->ble_scan_started_at == 0U) {
+        return;
+    }
+
+    const uint32_t elapsed_ms = furi_get_tick() - app->ble_scan_started_at;
+    uint8_t progress = 99U;
+
+    if(elapsed_ms < app->ble_scan_results.scan_duration_ms) {
+        progress = (uint8_t)((elapsed_ms * 100U) / app->ble_scan_results.scan_duration_ms);
+        if(progress >= 100U) {
+            progress = 99U;
+        }
+    }
+
+    if(progress != app->ble_scan_results.progress_percent) {
+        app->ble_scan_results.progress_percent = progress;
+        app->ble_dirty = true;
+    }
+}
+
 static void fuse_radio_app_set_wifi_info_text(FuseRadioApp* app, const char* text) {
     strncpy(app->wifi_info_text, text, sizeof(app->wifi_info_text) - 1U);
     app->wifi_info_text[sizeof(app->wifi_info_text) - 1U] = '\0';
@@ -717,6 +818,36 @@ void fuse_radio_app_refresh_saved_ble_view(FuseRadioApp* app) {
     fuse_radio_ble_scan_view_set_mode(app->ble_scan_view, FuseRadioBleScanViewModeSaved);
     fuse_radio_ble_scan_view_set_saved_data(app->ble_scan_view, &app->saved_ble_results);
     app->ble_dirty = false;
+}
+
+void fuse_radio_app_refresh_ble_info_widget(FuseRadioApp* app) {
+    furi_assert(app);
+
+    widget_reset(app->widget);
+    widget_add_string_element(
+        app->widget,
+        64,
+        6,
+        AlignCenter,
+        AlignTop,
+        FontPrimary,
+        app->ble_selection.device.has_name ? app->ble_selection.device.name : "BLE Device");
+
+    snprintf(
+        app->ble_info_text,
+        sizeof(app->ble_info_text),
+        "%s\nCompany %s\nLooks %s\nProximity %s\nRSSI %d dBm\nAdvert %s\nMAC %s\nSaved %s\nSeen now %s",
+        app->ble_selection.device.classification[0] ? app->ble_selection.device.classification : "BLE",
+        app->ble_selection.device.has_company ? app->ble_selection.device.company : "unknown",
+        app->ble_selection.device.has_appearance ? app->ble_selection.device.appearance : "unknown",
+        app->ble_selection.device.proximity[0] ? app->ble_selection.device.proximity : "unknown",
+        app->ble_selection.device.rssi,
+        app->ble_selection.device.connectable ? "connectable" : "broadcast",
+        app->ble_selection.device.mac,
+        app->ble_selection.is_saved ? "yes" : "no",
+        app->ble_selection.seen_recently ? "yes" : "no");
+
+    widget_add_text_scroll_element(app->widget, 0, 16, 128, 34, app->ble_info_text);
 }
 
 static void fuse_radio_app_append_promiscuous_text(FuseRadioApp* app, const char* fmt, ...) {
@@ -999,12 +1130,25 @@ bool fuse_radio_app_send_ping(FuseRadioApp* app) {
     return fuse_radio_app_send_line(app, "PING\n");
 }
 
+void fuse_radio_app_set_ble_scan_mode(FuseRadioApp* app, FuseRadioBleScanMode mode) {
+    furi_assert(app);
+    app->ble_scan_mode = mode;
+}
+
+FuseRadioBleScanMode fuse_radio_app_get_ble_scan_mode(FuseRadioApp* app) {
+    furi_assert(app);
+    return app->ble_scan_mode;
+}
+
 static bool fuse_radio_app_send_wifi_scan(FuseRadioApp* app) {
     return fuse_radio_app_send_line(app, "WIFI SCAN\n");
 }
 
 static bool fuse_radio_app_send_ble_scan(FuseRadioApp* app) {
-    return fuse_radio_app_send_line(app, "BLE SCAN\n");
+    char line[32];
+
+    snprintf(line, sizeof(line), "BLE SCAN %u\n", (unsigned)fuse_radio_app_ble_scan_duration_ms(app));
+    return fuse_radio_app_send_line(app, line);
 }
 
 static bool fuse_radio_app_format_quoted_arg(char* out, size_t out_size, const char* value) {
@@ -1827,29 +1971,52 @@ static bool fuse_radio_app_parse_ble_device_line(FuseRadioApp* app, const char* 
 
     const char* mac_begin = line + 11;
     const char* rssi_tag = strstr(mac_begin, " RSSI ");
-    const char* addr_tag = rssi_tag ? strstr(rssi_tag + 6, " ADDR ") : NULL;
+    const char* company_tag = rssi_tag ? strstr(rssi_tag + 6, " COMPANY ") : NULL;
+    const char* appear_tag = company_tag ? strstr(company_tag + 9, " APPEAR ") : NULL;
+    const char* class_tag = appear_tag ? strstr(appear_tag + 8, " CLASS ") : NULL;
+    const char* prox_tag = class_tag ? strstr(class_tag + 7, " PROX ") : NULL;
+    const char* addr_tag = prox_tag ? strstr(prox_tag + 6, " ADDR ") : NULL;
     const char* conn_tag = addr_tag ? strstr(addr_tag + 6, " CONN ") : NULL;
     const char* name_tag = conn_tag ? strstr(conn_tag + 6, " NAME ") : NULL;
 
-    if(!rssi_tag || !addr_tag || !conn_tag || !name_tag) {
+    if(!rssi_tag || !company_tag || !appear_tag || !class_tag || !prox_tag || !addr_tag ||
+       !conn_tag || !name_tag) {
         return false;
     }
 
     FuseRadioBleDevice* device = &app->ble_scan_results.devices[app->ble_scan_results.count];
     const size_t mac_size = (size_t)(rssi_tag - mac_begin);
+    const size_t company_size = (size_t)(appear_tag - (company_tag + 9));
+    const size_t appearance_size = (size_t)(class_tag - (appear_tag + 8));
+    const size_t class_size = (size_t)(prox_tag - (class_tag + 7));
+    const size_t proximity_size = (size_t)(addr_tag - (prox_tag + 6));
     const size_t addr_size = (size_t)(conn_tag - (addr_tag + 6));
     const size_t conn_size = (size_t)(name_tag - (conn_tag + 6));
     const char* name_begin = name_tag + 6;
     const size_t name_size = strlen(name_begin);
+    char company_text[FUSE_RADIO_BLE_COMPANY_SIZE] = {0};
+    char appearance_text[FUSE_RADIO_BLE_APPEARANCE_SIZE] = {0};
+    char class_text[FUSE_RADIO_BLE_CLASS_SIZE] = {0};
+    char proximity_text[FUSE_RADIO_BLE_PROXIMITY_SIZE] = {0};
     char conn_text[8] = {0};
 
-    if(mac_size >= sizeof(device->mac) || addr_size >= sizeof(device->addr_type) ||
+    if(mac_size >= sizeof(device->mac) || company_size >= sizeof(company_text) ||
+       appearance_size >= sizeof(appearance_text) || class_size >= sizeof(class_text) ||
+       proximity_size >= sizeof(proximity_text) || addr_size >= sizeof(device->addr_type) ||
        conn_size >= sizeof(conn_text)) {
         return false;
     }
 
     memcpy(device->mac, mac_begin, mac_size);
     device->mac[mac_size] = '\0';
+    memcpy(company_text, company_tag + 9, company_size);
+    company_text[company_size] = '\0';
+    memcpy(appearance_text, appear_tag + 8, appearance_size);
+    appearance_text[appearance_size] = '\0';
+    memcpy(class_text, class_tag + 7, class_size);
+    class_text[class_size] = '\0';
+    memcpy(proximity_text, prox_tag + 6, proximity_size);
+    proximity_text[proximity_size] = '\0';
     memcpy(device->addr_type, addr_tag + 6, addr_size);
     device->addr_type[addr_size] = '\0';
     memcpy(conn_text, conn_tag + 6, conn_size);
@@ -1857,6 +2024,20 @@ static bool fuse_radio_app_parse_ble_device_line(FuseRadioApp* app, const char* 
 
     device->rssi = (int16_t)strtol(rssi_tag + 6, NULL, 10);
     device->connectable = strcmp(conn_text, "YES") == 0;
+    device->has_company = strcmp(company_text, "-") != 0;
+    if(device->has_company) {
+        fuse_radio_app_strlcpy(device->company, company_text, sizeof(device->company));
+    } else {
+        device->company[0] = '\0';
+    }
+    device->has_appearance = strcmp(appearance_text, "-") != 0;
+    if(device->has_appearance) {
+        fuse_radio_app_strlcpy(device->appearance, appearance_text, sizeof(device->appearance));
+    } else {
+        device->appearance[0] = '\0';
+    }
+    fuse_radio_app_strlcpy(device->classification, class_text, sizeof(device->classification));
+    fuse_radio_app_strlcpy(device->proximity, proximity_text, sizeof(device->proximity));
     device->has_name = strcmp(name_begin, "-") != 0;
     if(device->has_name) {
         const size_t copy_size =
@@ -2015,6 +2196,7 @@ static void fuse_radio_app_handle_error_line(FuseRadioApp* app, const char* line
         app->ble_scan_results.active = false;
         app->ble_scan_results.complete = true;
         app->ble_scan_results.has_error = true;
+        app->ble_scan_results.progress_percent = 100U;
         strncpy(app->ble_scan_results.error, line, sizeof(app->ble_scan_results.error) - 1U);
         app->ble_scan_results.error[sizeof(app->ble_scan_results.error) - 1U] = '\0';
         app->current_request = FuseRadioRequestNone;
@@ -2113,6 +2295,18 @@ static void fuse_radio_app_handle_error_line(FuseRadioApp* app, const char* line
 static void fuse_radio_app_handle_line(FuseRadioApp* app, const char* line) {
     if(strcmp(line, "READY") == 0 || strcmp(line, "PONG") == 0) {
         fuse_radio_app_mark_detected(app);
+    } else if(strncmp(line, "BLE_SCAN_START ", 15) == 0) {
+        app->current_request = FuseRadioRequestBleScan;
+        app->ble_scan_results.active = true;
+        app->ble_scan_results.complete = false;
+        app->ble_scan_results.has_error = false;
+        app->ble_scan_results.progress_percent = 0U;
+        app->ble_scan_results.scan_duration_ms = (uint16_t)strtoul(line + 15, NULL, 10);
+        if(app->ble_scan_results.scan_duration_ms == 0U) {
+            app->ble_scan_results.scan_duration_ms = fuse_radio_app_ble_scan_duration_ms(app);
+        }
+        app->ble_scan_started_at = furi_get_tick();
+        app->ble_dirty = true;
     } else if(strncmp(line, "BLE_SCAN_COUNT ", 15) == 0) {
         app->current_request = FuseRadioRequestBleScan;
         app->ble_scan_results.total_count = (uint16_t)strtoul(line + 15, NULL, 10);
@@ -2126,6 +2320,7 @@ static void fuse_radio_app_handle_line(FuseRadioApp* app, const char* line) {
         app->current_request = FuseRadioRequestNone;
         app->ble_scan_results.active = false;
         app->ble_scan_results.complete = true;
+        app->ble_scan_results.progress_percent = 100U;
         app->ble_dirty = true;
     } else if(strncmp(line, "SCAN_COUNT ", 11) == 0) {
         app->current_request = FuseRadioRequestScan;
@@ -2661,6 +2856,9 @@ bool fuse_radio_app_start_ble_scan(FuseRadioApp* app) {
     fuse_radio_app_clear_saved_ble_presence(app);
     app->current_request = FuseRadioRequestBleScan;
     app->ble_scan_results.active = true;
+    app->ble_scan_results.scan_duration_ms = fuse_radio_app_ble_scan_duration_ms(app);
+    app->ble_scan_results.progress_percent = 0U;
+    app->ble_scan_started_at = furi_get_tick();
 
     if(app->module_state != FuseRadioModuleStateDetected) {
         app->current_request = FuseRadioRequestNone;
@@ -2694,7 +2892,7 @@ bool fuse_radio_app_start_ble_scan(FuseRadioApp* app) {
     return true;
 }
 
-bool fuse_radio_app_save_selected_ble_device(FuseRadioApp* app) {
+bool fuse_radio_app_select_ble_scan_device(FuseRadioApp* app) {
     furi_assert(app);
 
     if(app->ble_scan_results.count == 0U) {
@@ -2703,10 +2901,91 @@ bool fuse_radio_app_save_selected_ble_device(FuseRadioApp* app) {
 
     uint8_t selected_index = fuse_radio_ble_scan_view_get_selected_index(app->ble_scan_view);
     if(selected_index >= app->ble_scan_results.count) {
-        selected_index = 0U;
+        return false;
     }
 
-    const FuseRadioBleDevice* source = &app->ble_scan_results.devices[selected_index];
+    memset(&app->ble_selection, 0, sizeof(app->ble_selection));
+    app->ble_selection.device = app->ble_scan_results.devices[selected_index];
+    app->ble_selection.seen_recently = true;
+    app->ble_selection.is_saved =
+        fuse_radio_app_find_saved_ble_device_index(app, app->ble_selection.device.mac) >= 0;
+    return true;
+}
+
+bool fuse_radio_app_select_saved_ble_device(FuseRadioApp* app) {
+    furi_assert(app);
+
+    if(app->saved_ble_results.count == 0U) {
+        return false;
+    }
+
+    uint8_t selected_index = fuse_radio_ble_scan_view_get_selected_index(app->ble_scan_view);
+    if(selected_index >= app->saved_ble_results.count) {
+        return false;
+    }
+
+    const FuseRadioSavedBleDevice* saved = &app->saved_ble_results.devices[selected_index];
+    memset(&app->ble_selection, 0, sizeof(app->ble_selection));
+    fuse_radio_app_strlcpy(app->ble_selection.device.mac, saved->mac, sizeof(app->ble_selection.device.mac));
+    fuse_radio_app_strlcpy(
+        app->ble_selection.device.addr_type,
+        saved->addr_type,
+        sizeof(app->ble_selection.device.addr_type));
+    app->ble_selection.device.connectable = saved->connectable;
+    app->ble_selection.device.has_name = saved->has_name;
+    app->ble_selection.device.has_company = saved->has_company;
+    app->ble_selection.device.has_appearance = saved->has_appearance;
+    if(saved->has_name) {
+        fuse_radio_app_strlcpy(
+            app->ble_selection.device.name,
+            saved->name,
+            sizeof(app->ble_selection.device.name));
+    }
+    if(saved->has_company) {
+        fuse_radio_app_strlcpy(
+            app->ble_selection.device.company,
+            saved->company,
+            sizeof(app->ble_selection.device.company));
+    }
+    if(saved->has_appearance) {
+        fuse_radio_app_strlcpy(
+            app->ble_selection.device.appearance,
+            saved->appearance,
+            sizeof(app->ble_selection.device.appearance));
+    }
+    fuse_radio_app_strlcpy(
+        app->ble_selection.device.classification,
+        saved->classification,
+        sizeof(app->ble_selection.device.classification));
+    fuse_radio_app_strlcpy(
+        app->ble_selection.device.proximity,
+        saved->proximity,
+        sizeof(app->ble_selection.device.proximity));
+    app->ble_selection.device.rssi = saved->last_rssi;
+    app->ble_selection.is_saved = true;
+    app->ble_selection.seen_recently = saved->seen_recently;
+    return true;
+}
+
+bool fuse_radio_app_save_selected_ble_device(FuseRadioApp* app) {
+    furi_assert(app);
+
+    const FuseRadioBleDevice* source = NULL;
+
+    if(app->ble_selection.device.mac[0]) {
+        source = &app->ble_selection.device;
+    } else if(app->ble_scan_results.count > 0U) {
+        uint8_t selected_index = fuse_radio_ble_scan_view_get_selected_index(app->ble_scan_view);
+        if(selected_index >= app->ble_scan_results.count) {
+            selected_index = 0U;
+        }
+        source = &app->ble_scan_results.devices[selected_index];
+    }
+
+    if(source == NULL) {
+        return false;
+    }
+
     int32_t saved_index = fuse_radio_app_find_saved_ble_device_index(app, source->mac);
     if(saved_index < 0) {
         if(app->saved_ble_results.count < FUSE_RADIO_MAX_SAVED_BLE_DEVICES) {
@@ -2727,13 +3006,52 @@ bool fuse_radio_app_save_selected_ble_device(FuseRadioApp* app) {
     fuse_radio_app_strlcpy(saved->addr_type, source->addr_type, sizeof(saved->addr_type));
     saved->connectable = source->connectable;
     saved->has_name = source->has_name;
+    saved->has_company = source->has_company;
+    saved->has_appearance = source->has_appearance;
     if(source->has_name) {
         fuse_radio_app_strlcpy(saved->name, source->name, sizeof(saved->name));
     }
+    if(source->has_company) {
+        fuse_radio_app_strlcpy(saved->company, source->company, sizeof(saved->company));
+    }
+    if(source->has_appearance) {
+        fuse_radio_app_strlcpy(saved->appearance, source->appearance, sizeof(saved->appearance));
+    }
+    fuse_radio_app_strlcpy(
+        saved->classification, source->classification, sizeof(saved->classification));
+    fuse_radio_app_strlcpy(saved->proximity, source->proximity, sizeof(saved->proximity));
     saved->last_rssi = source->rssi;
     saved->seen_recently = true;
+    app->ble_selection.is_saved = true;
     app->ble_dirty = true;
 
+    return fuse_radio_app_save_ble_devices(app);
+}
+
+bool fuse_radio_app_remove_selected_ble_device(FuseRadioApp* app) {
+    furi_assert(app);
+
+    if(!app->ble_selection.is_saved || !app->ble_selection.device.mac[0]) {
+        return false;
+    }
+
+    const int32_t saved_index =
+        fuse_radio_app_find_saved_ble_device_index(app, app->ble_selection.device.mac);
+    if(saved_index < 0) {
+        return false;
+    }
+
+    if((uint8_t)saved_index + 1U < app->saved_ble_results.count) {
+        memmove(
+            &app->saved_ble_results.devices[saved_index],
+            &app->saved_ble_results.devices[saved_index + 1],
+            sizeof(app->saved_ble_results.devices[0]) *
+                (app->saved_ble_results.count - (uint8_t)saved_index - 1U));
+    }
+
+    app->saved_ble_results.count--;
+    app->ble_selection.is_saved = false;
+    app->ble_dirty = true;
     return fuse_radio_app_save_ble_devices(app);
 }
 
@@ -2964,6 +3282,7 @@ void fuse_radio_app_handle_tick(FuseRadioApp* app) {
     furi_assert(app);
 
     fuse_radio_app_process_rx(app);
+    fuse_radio_app_update_ble_scan_progress(app);
 
     if(app->module_state == FuseRadioModuleStatePowering) {
         const uint32_t now = furi_get_tick();
@@ -3117,6 +3436,7 @@ FuseRadioApp* fuse_radio_app_alloc(void) {
     app->storage = furi_record_open(RECORD_STORAGE);
     app->credentials_format = flipper_format_file_alloc(app->storage);
 
+    app->ble_scan_mode = FuseRadioBleScanModeNormal;
     fuse_radio_app_reset_wifi_status(app);
     app->promiscuous_watch_channel = 1U;
     fuse_radio_app_set_status(app, "Preparing module session.");
