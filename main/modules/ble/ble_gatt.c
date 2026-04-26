@@ -9,6 +9,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "freertos/timers.h"
 #include "host/ble_gap.h"
 #include "host/ble_gatt.h"
 #include "host/ble_hs.h"
@@ -25,10 +26,12 @@
 #define BLE_GATT_NAME_STR_SIZE      16
 #define BLE_GATT_PROPS_STR_SIZE     48   /* "READ WRITE NOTIFY INDICATE WRITE_NR" */
 #define BLE_GATT_VALUE_STR_SIZE     36
+#define BLE_GATT_RAW_HEX_STR_SIZE   (BLE_GATT_VALUE_BUF_CAP * 2 + 1)
 #define BLE_GATT_VALUE_BUF_CAP      32
 #define BLE_GATT_LINE_SIZE         128
 #define BLE_GATT_CONNECT_TIMEOUT_MS 5000
 #define BLE_GATT_TOTAL_TIMEOUT_MS  25000
+#define BLE_GATT_LISTEN_WINDOW_MS  1800
 
 /* ---- UUID lookup tables ---- */
 
@@ -118,8 +121,10 @@ typedef struct {
     char name[BLE_GATT_NAME_STR_SIZE];
     char props[BLE_GATT_PROPS_STR_SIZE];
     char value[BLE_GATT_VALUE_STR_SIZE];
+    char raw_hex[BLE_GATT_RAW_HEX_STR_SIZE];
     uint16_t val_handle;
     uint16_t uuid16;        /* 0 for 128-bit UUIDs */
+    uint8_t properties;
     bool has_value;
     bool in_use;
 } ble_gatt_chr_t;
@@ -139,6 +144,8 @@ typedef enum {
     BLE_GATT_PHASE_DISC_SVCS,
     BLE_GATT_PHASE_DISC_CHRS,
     BLE_GATT_PHASE_READING,
+    BLE_GATT_PHASE_SUBSCRIBING,
+    BLE_GATT_PHASE_LISTENING,
     BLE_GATT_PHASE_DONE,
     BLE_GATT_PHASE_FAILED,
 } ble_gatt_phase_t;
@@ -163,7 +170,12 @@ typedef struct {
     uint8_t read_queue_chr[BLE_GATT_MAX_READS];
     uint8_t read_queue_len;
     uint8_t read_pos;
+    uint8_t sub_queue_svc[BLE_GATT_MAX_READS];
+    uint8_t sub_queue_chr[BLE_GATT_MAX_READS];
+    uint8_t sub_queue_len;
+    uint8_t sub_pos;
     SemaphoreHandle_t done_semaphore;
+    TimerHandle_t listen_timer;
     ble_gatt_phase_t phase;
     ble_gatt_fail_stage_t fail_stage;
     int fail_status;
@@ -302,6 +314,78 @@ static bool ble_gatt_try_decode_ascii(
     return true;
 }
 
+static bool ble_gatt_try_decode_utf16le(
+    const uint8_t *buf,
+    uint16_t len,
+    char *out,
+    size_t out_size)
+{
+    uint16_t trimmed_len = len;
+    uint16_t pairs = 0;
+    uint16_t printable = 0;
+
+    while (trimmed_len >= 2 && buf[trimmed_len - 1] == 0x00 && buf[trimmed_len - 2] == 0x00) {
+        trimmed_len -= 2;
+    }
+
+    if ((trimmed_len < 4) || ((trimmed_len & 1U) != 0) || out_size < 2) {
+        return false;
+    }
+
+    pairs = trimmed_len / 2U;
+    for (uint16_t i = 0; i < pairs; i++) {
+        const uint8_t lo = buf[i * 2U];
+        const uint8_t hi = buf[i * 2U + 1U];
+
+        if (hi != 0x00) {
+            return false;
+        }
+
+        if ((lo >= 0x20 && lo < 0x7F) || lo == '\t') {
+            printable++;
+        }
+    }
+
+    if (((uint32_t)printable * 100U) / (uint32_t)pairs < 85U) {
+        return false;
+    }
+
+    size_t copy_len = pairs;
+    if (copy_len >= out_size) {
+        copy_len = out_size - 1U;
+    }
+
+    for (size_t i = 0; i < copy_len; i++) {
+        const uint8_t lo = buf[i * 2U];
+        out[i] = (lo >= 0x20 && lo < 0x7F) ? (char)lo : ' ';
+    }
+
+    out[copy_len] = '\0';
+    return true;
+}
+
+static void ble_gatt_hex_encode(
+    const uint8_t *buf,
+    uint16_t len,
+    char *out,
+    size_t out_size)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    size_t pos = 0;
+
+    if (out_size == 0) {
+        return;
+    }
+
+    out[0] = '\0';
+
+    for (uint16_t i = 0; i < len && pos + 2 < out_size; i++) {
+        out[pos++] = hex[(buf[i] >> 4) & 0x0F];
+        out[pos++] = hex[buf[i] & 0x0F];
+    }
+    out[pos] = '\0';
+}
+
 static void ble_gatt_decode_value(ble_gatt_chr_t *chr, struct os_mbuf *om)
 {
     uint8_t buf[BLE_GATT_VALUE_BUF_CAP];
@@ -310,6 +394,8 @@ static void ble_gatt_decode_value(ble_gatt_chr_t *chr, struct os_mbuf *om)
     if (ble_hs_mbuf_to_flat(om, buf, sizeof(buf), &len) != 0 || len == 0) {
         return;
     }
+
+    ble_gatt_hex_encode(buf, len, chr->raw_hex, sizeof(chr->raw_hex));
 
     chr->has_value = true;
 
@@ -347,9 +433,55 @@ static void ble_gatt_decode_value(ble_gatt_chr_t *chr, struct os_mbuf *om)
         return;
     }
 
+    /* Service Changed: start_handle + end_handle */
+    if (chr->uuid16 == 0x2A05 && len >= 4) {
+        const uint16_t start_h = (uint16_t)buf[0] | ((uint16_t)buf[1] << 8);
+        const uint16_t end_h = (uint16_t)buf[2] | ((uint16_t)buf[3] << 8);
+        snprintf(chr->value, sizeof(chr->value), "chg 0x%04X-0x%04X", start_h, end_h);
+        return;
+    }
+
+    /* System ID */
+    if (chr->uuid16 == 0x2A23 && len >= 8) {
+        snprintf(
+            chr->value,
+            sizeof(chr->value),
+            "%02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X",
+            buf[0],
+            buf[1],
+            buf[2],
+            buf[3],
+            buf[4],
+            buf[5],
+            buf[6],
+            buf[7]);
+        return;
+    }
+
+    /* PnP ID: vendor src + vendor id + product id + product version */
+    if (chr->uuid16 == 0x2A50 && len >= 7) {
+        const uint8_t src = buf[0];
+        const uint16_t vid = (uint16_t)buf[1] | ((uint16_t)buf[2] << 8);
+        const uint16_t pid = (uint16_t)buf[3] | ((uint16_t)buf[4] << 8);
+        const uint16_t ver = (uint16_t)buf[5] | ((uint16_t)buf[6] << 8);
+        snprintf(
+            chr->value,
+            sizeof(chr->value),
+            "src%u vid%04X pid%04X v%04X",
+            (unsigned)src,
+            vid,
+            pid,
+            ver);
+        return;
+    }
+
     /* Known string characteristics */
     if (ble_gatt_is_string_chr(chr->uuid16)) {
         if (ble_gatt_try_decode_ascii(buf, len, chr->value, sizeof(chr->value))) {
+            return;
+        }
+
+        if (ble_gatt_try_decode_utf16le(buf, len, chr->value, sizeof(chr->value))) {
             return;
         }
 
@@ -363,6 +495,10 @@ static void ble_gatt_decode_value(ble_gatt_chr_t *chr, struct os_mbuf *om)
 
     /* Generic fallback: if it looks like text, show text instead of hex bytes. */
     if (ble_gatt_try_decode_ascii(buf, len, chr->value, sizeof(chr->value))) {
+        return;
+    }
+
+    if (ble_gatt_try_decode_utf16le(buf, len, chr->value, sizeof(chr->value))) {
         return;
     }
 
@@ -459,6 +595,24 @@ static int ble_gatt_read_cb(
     const struct ble_gatt_error *error,
     struct ble_gatt_attr *attr,
     void *arg);
+static int ble_gatt_subscribe_cb(
+    uint16_t conn_handle,
+    const struct ble_gatt_error *error,
+    struct ble_gatt_attr *attr,
+    void *arg);
+
+static void ble_gatt_listen_timer_cb(TimerHandle_t timer)
+{
+    ble_gatt_session_t *session = (ble_gatt_session_t *)pvTimerGetTimerID(timer);
+
+    if (session == NULL) {
+        return;
+    }
+
+    if (session->conn_handle != BLE_HS_CONN_HANDLE_NONE) {
+        ble_gap_terminate(session->conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+    }
+}
 
 /* ---- read queue ---- */
 
@@ -481,20 +635,97 @@ static void ble_gatt_build_read_queue(ble_gatt_session_t *session)
     }
 }
 
-static void ble_gatt_start_next_read(ble_gatt_session_t *session)
+static void ble_gatt_build_subscribe_queue(ble_gatt_session_t *session)
 {
-    if (session->read_pos >= session->read_queue_len) {
+    session->sub_queue_len = 0;
+    session->sub_pos = 0;
+
+    for (uint8_t si = 0; si < session->svc_count; si++) {
+        const ble_gatt_svc_t *svc = &session->svcs[si];
+        for (uint8_t ci = 0; ci < svc->chr_count; ci++) {
+            const ble_gatt_chr_t *chr = &svc->chrs[ci];
+            if (((chr->properties & BLE_GATT_CHR_PROP_NOTIFY) != 0 ||
+                 (chr->properties & BLE_GATT_CHR_PROP_INDICATE) != 0) &&
+                chr->val_handle != 0 &&
+                session->sub_queue_len < BLE_GATT_MAX_READS) {
+                session->sub_queue_svc[session->sub_queue_len] = si;
+                session->sub_queue_chr[session->sub_queue_len] = ci;
+                session->sub_queue_len++;
+            }
+        }
+    }
+}
+
+static void ble_gatt_start_listen_or_finish(ble_gatt_session_t *session)
+{
+    if (session->sub_queue_len == 0 || session->listen_timer == NULL) {
         session->phase = BLE_GATT_PHASE_DONE;
         ble_gatt_terminate(session);
         return;
     }
 
+    session->phase = BLE_GATT_PHASE_LISTENING;
+    if (xTimerStart(session->listen_timer, 0) != pdPASS) {
+        session->phase = BLE_GATT_PHASE_DONE;
+        ble_gatt_terminate(session);
+    }
+}
+
+static void ble_gatt_start_next_subscribe(ble_gatt_session_t *session)
+{
+    if (session->sub_pos >= session->sub_queue_len) {
+        ble_gatt_start_listen_or_finish(session);
+        return;
+    }
+
+    const uint8_t si = session->sub_queue_svc[session->sub_pos];
+    const uint8_t ci = session->sub_queue_chr[session->sub_pos];
+    const ble_gatt_chr_t *chr = &session->svcs[si].chrs[ci];
+    const uint16_t cccd_handle = (uint16_t)(chr->val_handle + 1U);
+    uint8_t cccd_value[2] = {0x01, 0x00};
+
+    if ((chr->properties & BLE_GATT_CHR_PROP_NOTIFY) == 0 &&
+        (chr->properties & BLE_GATT_CHR_PROP_INDICATE) != 0) {
+        cccd_value[0] = 0x02;
+    }
+
+    int rc = ble_gattc_write_flat(
+        session->conn_handle,
+        cccd_handle,
+        cccd_value,
+        sizeof(cccd_value),
+        ble_gatt_subscribe_cb,
+        session);
+    if (rc != 0) {
+        session->sub_pos++;
+        ble_gatt_start_next_subscribe(session);
+    }
+}
+
+static void ble_gatt_start_next_read(ble_gatt_session_t *session)
+{
+    if (session->read_pos >= session->read_queue_len) {
+        ble_gatt_build_subscribe_queue(session);
+        if (session->sub_queue_len > 0) {
+            session->phase = BLE_GATT_PHASE_SUBSCRIBING;
+            ble_gatt_start_next_subscribe(session);
+        } else {
+            session->phase = BLE_GATT_PHASE_DONE;
+            ble_gatt_terminate(session);
+        }
+        return;
+    }
+
     uint8_t si = session->read_queue_svc[session->read_pos];
     uint8_t ci = session->read_queue_chr[session->read_pos];
-    uint16_t val_handle = session->svcs[si].chrs[ci].val_handle;
+    ble_gatt_chr_t *chr = &session->svcs[si].chrs[ci];
+    uint16_t val_handle = chr->val_handle;
 
     int rc = ble_gattc_read(session->conn_handle, val_handle, ble_gatt_read_cb, session);
     if (rc != 0) {
+        chr->has_value = true;
+        chr->raw_hex[0] = '\0';
+        snprintf(chr->value, sizeof(chr->value), "read_err %d", rc);
         /* Skip this chr on error */
         session->read_pos++;
         ble_gatt_start_next_read(session);
@@ -521,11 +752,39 @@ static int ble_gatt_read_cb(
         uint8_t si = session->read_queue_svc[session->read_pos];
         uint8_t ci = session->read_queue_chr[session->read_pos];
         ble_gatt_decode_value(&session->svcs[si].chrs[ci], attr->om);
+    } else if (error->status != 0) {
+        uint8_t si = session->read_queue_svc[session->read_pos];
+        uint8_t ci = session->read_queue_chr[session->read_pos];
+        ble_gatt_chr_t *chr = &session->svcs[si].chrs[ci];
+        chr->has_value = true;
+        chr->raw_hex[0] = '\0';
+        snprintf(chr->value, sizeof(chr->value), "read_err %d", error->status);
     }
 
     session->read_pos++;
     ble_gatt_start_next_read(session);
 
+    return 0;
+}
+
+static int ble_gatt_subscribe_cb(
+    uint16_t conn_handle,
+    const struct ble_gatt_error *error,
+    struct ble_gatt_attr *attr,
+    void *arg)
+{
+    ble_gatt_session_t *session = (ble_gatt_session_t *)arg;
+
+    (void)conn_handle;
+    (void)error;
+    (void)attr;
+
+    if (session == NULL) {
+        return 0;
+    }
+
+    session->sub_pos++;
+    ble_gatt_start_next_subscribe(session);
     return 0;
 }
 
@@ -551,6 +810,7 @@ static int ble_gatt_chr_disc_cb(
             ble_gatt_uuid_to_str(&chr->uuid.u, dst->uuid, sizeof(dst->uuid));
             dst->uuid16 = ble_gatt_uuid_to_u16(&chr->uuid.u);
             dst->val_handle = chr->val_handle;
+            dst->properties = chr->properties;
             ble_gatt_props_to_str(chr->properties, dst->props, sizeof(dst->props));
 
             const char *name = ble_gatt_lookup_chr_name(dst->uuid16);
@@ -712,6 +972,9 @@ static int ble_gatt_gap_event(struct ble_gap_event *event, void *arg)
         return 0;
 
     case BLE_GAP_EVENT_DISCONNECT:
+        if (session->listen_timer != NULL) {
+            (void)xTimerStop(session->listen_timer, 0);
+        }
         (void)status_led_set_ble_state(STATUS_LED_BLE_STATE_IDLE);
         if (session->phase == BLE_GATT_PHASE_DONE ||
             session->phase == BLE_GATT_PHASE_FAILED) {
@@ -724,6 +987,21 @@ static int ble_gatt_gap_event(struct ble_gap_event *event, void *arg)
         }
         ble_gatt_signal_done(session);
         return 0;
+
+    case BLE_GAP_EVENT_NOTIFY_RX: {
+        const uint16_t attr_handle = event->notify_rx.attr_handle;
+        for (uint8_t si = 0; si < session->svc_count; si++) {
+            ble_gatt_svc_t *svc = &session->svcs[si];
+            for (uint8_t ci = 0; ci < svc->chr_count; ci++) {
+                ble_gatt_chr_t *chr = &svc->chrs[ci];
+                if (chr->val_handle == attr_handle && event->notify_rx.om != NULL) {
+                    ble_gatt_decode_value(chr, event->notify_rx.om);
+                    return 0;
+                }
+            }
+        }
+        return 0;
+    }
 
     default:
         return 0;
@@ -771,10 +1049,20 @@ esp_err_t ble_gatt_inspect(
         return ESP_ERR_NO_MEM;
     }
 
+    session->listen_timer = xTimerCreate(
+        "gatt_listen",
+        pdMS_TO_TICKS(BLE_GATT_LISTEN_WINDOW_MS),
+        pdFALSE,
+        session,
+        ble_gatt_listen_timer_cb);
+
     uint8_t own_addr_type;
     int rc = ble_hs_id_infer_auto(0, &own_addr_type);
     if (rc != 0) {
         vSemaphoreDelete(session->done_semaphore);
+        if (session->listen_timer != NULL) {
+            xTimerDelete(session->listen_timer, 0);
+        }
         ble_manager_release();
         return ESP_FAIL;
     }
@@ -793,6 +1081,9 @@ esp_err_t ble_gatt_inspect(
         session);
     if (rc != 0) {
         vSemaphoreDelete(session->done_semaphore);
+        if (session->listen_timer != NULL) {
+            xTimerDelete(session->listen_timer, 0);
+        }
         ble_manager_release();
         snprintf(line, sizeof(line), "BLE_GATT_CONNECT_FAILED status=%d\n", rc);
         write_line(line, context);
@@ -814,12 +1105,18 @@ esp_err_t ble_gatt_inspect(
         }
         (void)xSemaphoreTake(session->done_semaphore, pdMS_TO_TICKS(1000));
         vSemaphoreDelete(session->done_semaphore);
+        if (session->listen_timer != NULL) {
+            xTimerDelete(session->listen_timer, 0);
+        }
         ble_manager_release();
         write_line("BLE_GATT_CONNECT_FAILED stage=timeout\n", context);
         return ESP_ERR_TIMEOUT;
     }
 
     vSemaphoreDelete(session->done_semaphore);
+    if (session->listen_timer != NULL) {
+        xTimerDelete(session->listen_timer, 0);
+    }
 
     if (session->phase == BLE_GATT_PHASE_FAILED) {
         ble_manager_release();
@@ -877,6 +1174,17 @@ esp_err_t ble_gatt_inspect(
                     chr->uuid,
                     chr->value);
                 write_line(line, context);
+
+                if (chr->raw_hex[0] != '\0') {
+                    snprintf(
+                        line,
+                        sizeof(line),
+                        "BLE_GATT_RAW %s %s %s\n",
+                        svc->uuid,
+                        chr->uuid,
+                        chr->raw_hex);
+                    write_line(line, context);
+                }
             }
         }
     }

@@ -905,13 +905,24 @@ void fuse_radio_app_refresh_gatt_chrs_widget(FuseRadioApp* app) {
         int written;
 
         if(chr->has_value && chr->value[0] != '\0') {
-            written = snprintf(
-                chrs_text + pos,
-                sizeof(chrs_text) - pos,
-                "%s\n  %s\n  %s\n",
-                chr_label,
-                chr->props,
-                chr->value);
+            if(chr->has_raw && chr->raw[0] != '\0') {
+                written = snprintf(
+                    chrs_text + pos,
+                    sizeof(chrs_text) - pos,
+                    "%s\n  %s\n  %s\n  raw %s\n",
+                    chr_label,
+                    chr->props,
+                    chr->value,
+                    chr->raw);
+            } else {
+                written = snprintf(
+                    chrs_text + pos,
+                    sizeof(chrs_text) - pos,
+                    "%s\n  %s\n  %s\n",
+                    chr_label,
+                    chr->props,
+                    chr->value);
+            }
         } else {
             written = snprintf(
                 chrs_text + pos,
@@ -2497,6 +2508,8 @@ static void fuse_radio_app_handle_line(FuseRadioApp* app, const char* line) {
                 fuse_radio_app_strlcpy(chr->name, name_tag + 6, sizeof(chr->name));
                 chr->has_value = false;
                 chr->value[0] = '\0';
+                chr->has_raw = false;
+                chr->raw[0] = '\0';
                 svc->chr_count++;
             }
         }
@@ -2537,6 +2550,48 @@ static void fuse_radio_app_handle_line(FuseRadioApp* app, const char* line) {
                             value_begin + 1,
                             sizeof(svc->chrs[ci].value));
                         svc->chrs[ci].has_value = true;
+                        break;
+                    }
+                }
+            }
+        }
+        app->gatt_dirty = true;
+    } else if(strncmp(line, "BLE_GATT_RAW ", 13) == 0) {
+        /* BLE_GATT_RAW <svc_uuid> <chr_uuid> <raw_hex> */
+        const char* svc_uuid_begin = line + 13;
+        const char* chr_uuid_begin = strstr(svc_uuid_begin, " ");
+        const char* raw_begin = chr_uuid_begin ? strstr(chr_uuid_begin + 1, " ") : NULL;
+        if(chr_uuid_begin != NULL && raw_begin != NULL) {
+            char svc_uuid[FUSE_RADIO_GATT_UUID_SIZE];
+            char chr_uuid[FUSE_RADIO_GATT_UUID_SIZE];
+
+            const size_t svc_uuid_len = (size_t)(chr_uuid_begin - svc_uuid_begin);
+            const size_t copy_svc = svc_uuid_len < sizeof(svc_uuid) - 1U ?
+                                        svc_uuid_len :
+                                        sizeof(svc_uuid) - 1U;
+            memcpy(svc_uuid, svc_uuid_begin, copy_svc);
+            svc_uuid[copy_svc] = '\0';
+
+            const size_t chr_uuid_len = (size_t)(raw_begin - (chr_uuid_begin + 1));
+            const size_t copy_chr = chr_uuid_len < sizeof(chr_uuid) - 1U ?
+                                        chr_uuid_len :
+                                        sizeof(chr_uuid) - 1U;
+            memcpy(chr_uuid, chr_uuid_begin + 1, copy_chr);
+            chr_uuid[copy_chr] = '\0';
+
+            for(uint8_t si = 0; si < app->gatt_results.svc_count; si++) {
+                FuseRadioGattService* svc = &app->gatt_results.svcs[si];
+                if(strcmp(svc->uuid, svc_uuid) != 0) {
+                    continue;
+                }
+
+                for(uint8_t ci = 0; ci < svc->chr_count; ci++) {
+                    if(strcmp(svc->chrs[ci].uuid, chr_uuid) == 0) {
+                        fuse_radio_app_strlcpy(
+                            svc->chrs[ci].raw,
+                            raw_begin + 1,
+                            sizeof(svc->chrs[ci].raw));
+                        svc->chrs[ci].has_raw = true;
                         break;
                     }
                 }

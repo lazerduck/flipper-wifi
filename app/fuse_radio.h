@@ -29,6 +29,7 @@
 #define FUSE_RADIO_GATT_NAME_SIZE 16U
 #define FUSE_RADIO_GATT_PROPS_SIZE 48U
 #define FUSE_RADIO_GATT_VALUE_SIZE 36U
+#define FUSE_RADIO_GATT_RAW_SIZE 65U
 
 typedef struct FuseRadioApp FuseRadioApp;
 
@@ -37,7 +38,9 @@ typedef struct {
     char name[FUSE_RADIO_GATT_NAME_SIZE];
     char props[FUSE_RADIO_GATT_PROPS_SIZE];
     char value[FUSE_RADIO_GATT_VALUE_SIZE];
+    char raw[FUSE_RADIO_GATT_RAW_SIZE];
     bool has_value;
+    bool has_raw;
 } FuseRadioGattCharacteristic;
 
 typedef struct {

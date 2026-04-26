@@ -3,7 +3,6 @@
 void fuse_radio_scene_ble_scan_on_enter(void* context) {
     FuseRadioApp* app = context;
 
-    fuse_radio_app_start_ble_scan(app);
     fuse_radio_app_refresh_ble_scan_view(app);
     view_dispatcher_switch_to_view(app->view_dispatcher, FuseRadioViewBleScan);
 }

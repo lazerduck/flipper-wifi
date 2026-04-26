@@ -18,6 +18,7 @@
  *   BLE_GATT_SVC <uuid> NAME <name|->
  *   BLE_GATT_CHR <svc_uuid> <chr_uuid> PROPS <props> NAME <name|->
  *   BLE_GATT_VAL <svc_uuid> <chr_uuid> <decoded_value>
+ *   BLE_GATT_RAW <svc_uuid> <chr_uuid> <hex_payload>
  *   ...
  *   BLE_GATT_DONE
  *

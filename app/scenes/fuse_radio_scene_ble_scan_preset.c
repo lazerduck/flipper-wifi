@@ -45,6 +45,7 @@ bool fuse_radio_scene_ble_scan_preset_on_event(void* context, SceneManagerEvent 
             fuse_radio_app_set_ble_scan_mode(app, FuseRadioBleScanModeNormal);
         }
 
+        fuse_radio_app_start_ble_scan(app);
         scene_manager_next_scene(app->scene_manager, FuseRadioSceneBleScan);
         return true;
     }
