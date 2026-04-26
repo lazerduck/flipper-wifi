@@ -4,6 +4,7 @@ enum FuseRadioBleDeviceActionIndex {
     FuseRadioBleDeviceActionIndexInfo,
     FuseRadioBleDeviceActionIndexSaveToggle,
     FuseRadioBleDeviceActionIndexScanNearby,
+    FuseRadioBleDeviceActionIndexGattInspect,
 };
 
 static void fuse_radio_scene_ble_device_actions_callback(void* context, uint32_t index) {
@@ -36,6 +37,15 @@ void fuse_radio_scene_ble_device_actions_on_enter(void* context) {
         fuse_radio_scene_ble_device_actions_callback,
         app);
 
+    if(app->ble_selection.device.connectable) {
+        submenu_add_item(
+            app->submenu,
+            "Inspect (GATT)",
+            FuseRadioBleDeviceActionIndexGattInspect,
+            fuse_radio_scene_ble_device_actions_callback,
+            app);
+    }
+
     view_dispatcher_switch_to_view(app->view_dispatcher, FuseRadioViewSubmenu);
 }
 
@@ -57,6 +67,9 @@ bool fuse_radio_scene_ble_device_actions_on_event(void* context, SceneManagerEve
             return true;
         case FuseRadioBleDeviceActionIndexScanNearby:
             scene_manager_next_scene(app->scene_manager, FuseRadioSceneBleScanPreset);
+            return true;
+        case FuseRadioBleDeviceActionIndexGattInspect:
+            scene_manager_next_scene(app->scene_manager, FuseRadioSceneBleGattProgress);
             return true;
         default:
             return false;

@@ -23,8 +23,39 @@
 #define FUSE_RADIO_BLE_PROXIMITY_SIZE 10U
 #define FUSE_RADIO_MAX_WATCH_DEVICES 12U
 #define FUSE_RADIO_MAX_SURVEY_CHANNELS 14U
+#define FUSE_RADIO_MAX_GATT_SVCS 12U
+#define FUSE_RADIO_MAX_GATT_CHRS_PER_SVC 8U
+#define FUSE_RADIO_GATT_UUID_SIZE 10U
+#define FUSE_RADIO_GATT_NAME_SIZE 16U
+#define FUSE_RADIO_GATT_PROPS_SIZE 48U
+#define FUSE_RADIO_GATT_VALUE_SIZE 36U
 
 typedef struct FuseRadioApp FuseRadioApp;
+
+typedef struct {
+    char uuid[FUSE_RADIO_GATT_UUID_SIZE];
+    char name[FUSE_RADIO_GATT_NAME_SIZE];
+    char props[FUSE_RADIO_GATT_PROPS_SIZE];
+    char value[FUSE_RADIO_GATT_VALUE_SIZE];
+    bool has_value;
+} FuseRadioGattCharacteristic;
+
+typedef struct {
+    char uuid[FUSE_RADIO_GATT_UUID_SIZE];
+    char name[FUSE_RADIO_GATT_NAME_SIZE];
+    FuseRadioGattCharacteristic chrs[FUSE_RADIO_MAX_GATT_CHRS_PER_SVC];
+    uint8_t chr_count;
+} FuseRadioGattService;
+
+typedef struct {
+    char mac[18U];
+    FuseRadioGattService svcs[FUSE_RADIO_MAX_GATT_SVCS];
+    uint8_t svc_count;
+    bool active;
+    bool complete;
+    bool has_error;
+    char error[FUSE_RADIO_SCAN_ERROR_SIZE];
+} FuseRadioGattResults;
 
 typedef enum {
     FuseRadioWifiStateIdle,

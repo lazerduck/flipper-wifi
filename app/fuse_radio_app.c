@@ -624,6 +624,12 @@ static void fuse_radio_app_wifi_http_button_callback(
     }
 }
 
+static void fuse_radio_app_gatt_services_submenu_callback(void* context, uint32_t index) {
+    FuseRadioApp* app = context;
+    app->ble_gatt_selected_svc = (uint8_t)index;
+    view_dispatcher_send_custom_event(app->view_dispatcher, (uint32_t)index);
+}
+
 static void fuse_radio_app_tick_event_callback(void* context) {
     FuseRadioApp* app = context;
     fuse_radio_app_handle_tick(app);
@@ -848,6 +854,84 @@ void fuse_radio_app_refresh_ble_info_widget(FuseRadioApp* app) {
         app->ble_selection.seen_recently ? "yes" : "no");
 
     widget_add_text_scroll_element(app->widget, 0, 16, 128, 34, app->ble_info_text);
+}
+
+void fuse_radio_app_refresh_gatt_services_submenu(FuseRadioApp* app) {
+    furi_assert(app);
+
+    submenu_reset(app->submenu);
+    submenu_set_header(app->submenu, "GATT Services");
+
+    if(app->gatt_results.svc_count == 0U) {
+        return;
+    }
+
+    for(uint8_t i = 0; i < app->gatt_results.svc_count; i++) {
+        const FuseRadioGattService* svc = &app->gatt_results.svcs[i];
+        const char* label = (svc->name[0] && svc->name[0] != '-') ? svc->name : svc->uuid;
+        submenu_add_item(
+            app->submenu,
+            label,
+            i,
+            fuse_radio_app_gatt_services_submenu_callback,
+            app);
+    }
+}
+
+void fuse_radio_app_refresh_gatt_chrs_widget(FuseRadioApp* app) {
+    furi_assert(app);
+
+    widget_reset(app->widget);
+
+    if(app->ble_gatt_selected_svc >= app->gatt_results.svc_count) {
+        widget_add_string_element(
+            app->widget, 64, 6, AlignCenter, AlignTop, FontPrimary, "No service");
+        return;
+    }
+
+    const FuseRadioGattService* svc = &app->gatt_results.svcs[app->ble_gatt_selected_svc];
+    const char* header = (svc->name[0] && svc->name[0] != '-') ? svc->name : svc->uuid;
+    widget_add_string_element(app->widget, 64, 5, AlignCenter, AlignTop, FontPrimary, header);
+
+    /* Build characteristics text for scroll element */
+    static char chrs_text[512];
+    size_t pos = 0;
+    chrs_text[0] = '\0';
+
+    for(uint8_t ci = 0; ci < svc->chr_count && pos < sizeof(chrs_text) - 1U; ci++) {
+        const FuseRadioGattCharacteristic* chr = &svc->chrs[ci];
+        const char* chr_label =
+            (chr->name[0] && chr->name[0] != '-') ? chr->name : chr->uuid;
+        int written;
+
+        if(chr->has_value && chr->value[0] != '\0') {
+            written = snprintf(
+                chrs_text + pos,
+                sizeof(chrs_text) - pos,
+                "%s\n  %s\n  %s\n",
+                chr_label,
+                chr->props,
+                chr->value);
+        } else {
+            written = snprintf(
+                chrs_text + pos,
+                sizeof(chrs_text) - pos,
+                "%s\n  %s\n",
+                chr_label,
+                chr->props);
+        }
+
+        if(written > 0) {
+            pos += (size_t)written;
+        }
+    }
+
+    if(pos == 0) {
+        snprintf(chrs_text, sizeof(chrs_text), "No characteristics");
+    }
+
+    widget_add_text_scroll_element(app->widget, 0, 15, 128, 38, chrs_text);
+    app->gatt_dirty = false;
 }
 
 static void fuse_radio_app_append_promiscuous_text(FuseRadioApp* app, const char* fmt, ...) {
@@ -1149,6 +1233,22 @@ static bool fuse_radio_app_send_ble_scan(FuseRadioApp* app) {
 
     snprintf(line, sizeof(line), "BLE SCAN %u\n", (unsigned)fuse_radio_app_ble_scan_duration_ms(app));
     return fuse_radio_app_send_line(app, line);
+}
+
+static bool fuse_radio_app_send_ble_gatt(FuseRadioApp* app) {
+    char line[64];
+
+    snprintf(
+        line,
+        sizeof(line),
+        "BLE GATT mac=%s addr_type=%s\n",
+        app->ble_selection.device.mac,
+        app->ble_selection.device.addr_type[0] ? app->ble_selection.device.addr_type : "RANDOM");
+    return fuse_radio_app_send_line(app, line);
+}
+
+static void fuse_radio_app_reset_gatt_results(FuseRadioApp* app) {
+    memset(&app->gatt_results, 0, sizeof(app->gatt_results));
 }
 
 static bool fuse_radio_app_format_quoted_arg(char* out, size_t out_size, const char* value) {
@@ -2322,6 +2422,159 @@ static void fuse_radio_app_handle_line(FuseRadioApp* app, const char* line) {
         app->ble_scan_results.complete = true;
         app->ble_scan_results.progress_percent = 100U;
         app->ble_dirty = true;
+    } else if(strncmp(line, "BLE_GATT_START ", 15) == 0) {
+        app->current_request = FuseRadioRequestBleGatt;
+        app->gatt_results.active = true;
+        app->gatt_results.complete = false;
+        app->gatt_results.has_error = false;
+        app->gatt_results.svc_count = 0U;
+        fuse_radio_app_strlcpy(app->gatt_results.mac, line + 15, sizeof(app->gatt_results.mac));
+        app->gatt_dirty = true;
+    } else if(strcmp(line, "BLE_GATT_CONNECTED") == 0) {
+        app->gatt_dirty = true;
+    } else if(strncmp(line, "BLE_GATT_SVC ", 13) == 0) {
+        /* BLE_GATT_SVC <uuid> NAME <name> */
+        if(app->gatt_results.svc_count < FUSE_RADIO_MAX_GATT_SVCS) {
+            const char* uuid_begin = line + 13;
+            const char* name_tag = strstr(uuid_begin, " NAME ");
+            FuseRadioGattService* svc = &app->gatt_results.svcs[app->gatt_results.svc_count];
+            if(name_tag != NULL) {
+                const size_t uuid_len = (size_t)(name_tag - uuid_begin);
+                const size_t copy_uuid = uuid_len < sizeof(svc->uuid) - 1U ?
+                                            uuid_len :
+                                            sizeof(svc->uuid) - 1U;
+                memcpy(svc->uuid, uuid_begin, copy_uuid);
+                svc->uuid[copy_uuid] = '\0';
+                fuse_radio_app_strlcpy(svc->name, name_tag + 6, sizeof(svc->name));
+            } else {
+                fuse_radio_app_strlcpy(svc->uuid, uuid_begin, sizeof(svc->uuid));
+                svc->name[0] = '-';
+                svc->name[1] = '\0';
+            }
+            svc->chr_count = 0U;
+            app->gatt_results.svc_count++;
+        }
+        app->gatt_dirty = true;
+    } else if(strncmp(line, "BLE_GATT_CHR ", 13) == 0) {
+        /* BLE_GATT_CHR <svc_uuid> <chr_uuid> PROPS <props> NAME <name> */
+        const char* svc_uuid_begin = line + 13;
+        const char* chr_uuid_begin = strstr(svc_uuid_begin, " ");
+        const char* props_tag = chr_uuid_begin ? strstr(chr_uuid_begin + 1, " PROPS ") : NULL;
+        const char* name_tag = props_tag ? strstr(props_tag + 7, " NAME ") : NULL;
+        if(chr_uuid_begin != NULL && props_tag != NULL && name_tag != NULL &&
+           app->gatt_results.svc_count > 0U) {
+            /* Find matching service */
+            char svc_uuid[FUSE_RADIO_GATT_UUID_SIZE];
+            const size_t svc_uuid_len = (size_t)(chr_uuid_begin - svc_uuid_begin);
+            const size_t copy_len = svc_uuid_len < sizeof(svc_uuid) - 1U ?
+                                        svc_uuid_len :
+                                        sizeof(svc_uuid) - 1U;
+            memcpy(svc_uuid, svc_uuid_begin, copy_len);
+            svc_uuid[copy_len] = '\0';
+            /* Walk backwards to find the right service */
+            FuseRadioGattService* svc = NULL;
+            for(int32_t si = (int32_t)app->gatt_results.svc_count - 1; si >= 0; si--) {
+                if(strcmp(app->gatt_results.svcs[si].uuid, svc_uuid) == 0) {
+                    svc = &app->gatt_results.svcs[si];
+                    break;
+                }
+            }
+            if(svc != NULL && svc->chr_count < FUSE_RADIO_MAX_GATT_CHRS_PER_SVC) {
+                FuseRadioGattCharacteristic* chr = &svc->chrs[svc->chr_count];
+                const char* chr_uuid_end = props_tag;
+                const size_t chr_uuid_len = (size_t)(chr_uuid_end - (chr_uuid_begin + 1));
+                const size_t copy_chr = chr_uuid_len < sizeof(chr->uuid) - 1U ?
+                                            chr_uuid_len :
+                                            sizeof(chr->uuid) - 1U;
+                memcpy(chr->uuid, chr_uuid_begin + 1, copy_chr);
+                chr->uuid[copy_chr] = '\0';
+                const size_t props_len = (size_t)(name_tag - (props_tag + 7));
+                const size_t copy_props = props_len < sizeof(chr->props) - 1U ?
+                                              props_len :
+                                              sizeof(chr->props) - 1U;
+                memcpy(chr->props, props_tag + 7, copy_props);
+                chr->props[copy_props] = '\0';
+                fuse_radio_app_strlcpy(chr->name, name_tag + 6, sizeof(chr->name));
+                chr->has_value = false;
+                chr->value[0] = '\0';
+                svc->chr_count++;
+            }
+        }
+        app->gatt_dirty = true;
+    } else if(strncmp(line, "BLE_GATT_VAL ", 13) == 0) {
+        /* BLE_GATT_VAL <svc_uuid> <chr_uuid> <value> */
+        const char* svc_uuid_begin = line + 13;
+        const char* chr_uuid_begin = strstr(svc_uuid_begin, " ");
+        const char* value_begin = chr_uuid_begin ? strstr(chr_uuid_begin + 1, " ") : NULL;
+        if(chr_uuid_begin != NULL && value_begin != NULL) {
+            char svc_uuid[FUSE_RADIO_GATT_UUID_SIZE];
+            char chr_uuid[FUSE_RADIO_GATT_UUID_SIZE];
+
+            const size_t svc_uuid_len = (size_t)(chr_uuid_begin - svc_uuid_begin);
+            const size_t copy_svc = svc_uuid_len < sizeof(svc_uuid) - 1U ?
+                                        svc_uuid_len :
+                                        sizeof(svc_uuid) - 1U;
+            memcpy(svc_uuid, svc_uuid_begin, copy_svc);
+            svc_uuid[copy_svc] = '\0';
+
+            const size_t chr_uuid_len = (size_t)(value_begin - (chr_uuid_begin + 1));
+            const size_t copy_chr = chr_uuid_len < sizeof(chr_uuid) - 1U ?
+                                        chr_uuid_len :
+                                        sizeof(chr_uuid) - 1U;
+            memcpy(chr_uuid, chr_uuid_begin + 1, copy_chr);
+            chr_uuid[copy_chr] = '\0';
+
+            for(uint8_t si = 0; si < app->gatt_results.svc_count; si++) {
+                FuseRadioGattService* svc = &app->gatt_results.svcs[si];
+                if(strcmp(svc->uuid, svc_uuid) != 0) {
+                    continue;
+                }
+
+                for(uint8_t ci = 0; ci < svc->chr_count; ci++) {
+                    if(strcmp(svc->chrs[ci].uuid, chr_uuid) == 0) {
+                        fuse_radio_app_strlcpy(
+                            svc->chrs[ci].value,
+                            value_begin + 1,
+                            sizeof(svc->chrs[ci].value));
+                        svc->chrs[ci].has_value = true;
+                        break;
+                    }
+                }
+            }
+        }
+        app->gatt_dirty = true;
+    } else if(strcmp(line, "BLE_GATT_DONE") == 0) {
+        app->current_request = FuseRadioRequestNone;
+        app->gatt_results.active = false;
+        app->gatt_results.complete = true;
+        app->gatt_dirty = true;
+        view_dispatcher_send_custom_event(
+            app->view_dispatcher, FuseRadioCustomEventBleGattDone);
+    } else if(strncmp(line, "BLE_GATT_CONNECT_FAILED", 23) == 0 ||
+              strncmp(line, "BLE_GATT_DISCOVER_FAILED", 24) == 0) {
+        app->current_request = FuseRadioRequestNone;
+        app->gatt_results.active = false;
+        app->gatt_results.complete = true;
+        app->gatt_results.has_error = true;
+        const bool connect_failed = strncmp(line, "BLE_GATT_CONNECT_FAILED", 23) == 0;
+        const char* detail = strchr(line, ' ');
+        if(detail != NULL && detail[1] != '\0') {
+            snprintf(
+                app->gatt_results.error,
+                sizeof(app->gatt_results.error),
+                "%s: %s",
+                connect_failed ? "Connect" : "Discover",
+                detail + 1);
+        } else {
+            strncpy(
+                app->gatt_results.error,
+                connect_failed ? "Connect failed" : "Discover failed",
+                sizeof(app->gatt_results.error) - 1U);
+        }
+        app->gatt_results.error[sizeof(app->gatt_results.error) - 1U] = '\0';
+        app->gatt_dirty = true;
+        view_dispatcher_send_custom_event(
+            app->view_dispatcher, FuseRadioCustomEventBleGattFailed);
     } else if(strncmp(line, "SCAN_COUNT ", 11) == 0) {
         app->current_request = FuseRadioRequestScan;
         app->scan_results.total_count = (uint16_t)strtoul(line + 11, NULL, 10);
@@ -2889,6 +3142,49 @@ bool fuse_radio_app_start_ble_scan(FuseRadioApp* app) {
     }
 
     app->ble_dirty = true;
+    return true;
+}
+
+bool fuse_radio_app_start_ble_gatt(FuseRadioApp* app) {
+    furi_assert(app);
+
+    fuse_radio_app_reset_gatt_results(app);
+    fuse_radio_app_strlcpy(
+        app->gatt_results.mac,
+        app->ble_selection.device.mac,
+        sizeof(app->gatt_results.mac));
+    app->current_request = FuseRadioRequestBleGatt;
+    app->gatt_results.active = true;
+    app->gatt_dirty = true;
+
+    if(app->module_state != FuseRadioModuleStateDetected) {
+        app->current_request = FuseRadioRequestNone;
+        app->gatt_results.active = false;
+        app->gatt_results.complete = true;
+        app->gatt_results.has_error = true;
+        strncpy(
+            app->gatt_results.error,
+            "Board is not ready",
+            sizeof(app->gatt_results.error) - 1U);
+        app->gatt_results.error[sizeof(app->gatt_results.error) - 1U] = '\0';
+        app->gatt_dirty = true;
+        return false;
+    }
+
+    if(!fuse_radio_app_send_ble_gatt(app)) {
+        app->current_request = FuseRadioRequestNone;
+        app->gatt_results.active = false;
+        app->gatt_results.complete = true;
+        app->gatt_results.has_error = true;
+        strncpy(
+            app->gatt_results.error,
+            "UART write failed",
+            sizeof(app->gatt_results.error) - 1U);
+        app->gatt_results.error[sizeof(app->gatt_results.error) - 1U] = '\0';
+        app->gatt_dirty = true;
+        return false;
+    }
+
     return true;
 }
 

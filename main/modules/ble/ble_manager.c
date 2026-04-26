@@ -979,6 +979,26 @@ static esp_err_t ble_manager_init(void)
     return ESP_OK;
 }
 
+esp_err_t ble_manager_ensure_init(void)
+{
+    return ble_manager_init();
+}
+
+bool ble_manager_try_acquire(void)
+{
+    if (s_ble_scan_mutex == NULL) {
+        return false;
+    }
+    return xSemaphoreTake(s_ble_scan_mutex, 0) == pdTRUE;
+}
+
+void ble_manager_release(void)
+{
+    if (s_ble_scan_mutex != NULL) {
+        xSemaphoreGive(s_ble_scan_mutex);
+    }
+}
+
 uint16_t ble_manager_default_scan_duration_ms(void)
 {
     return BLE_MANAGER_DEFAULT_SCAN_DURATION_MS;

@@ -90,6 +90,7 @@ typedef enum {
     FuseRadioRequestPromiscuousWatch,
     FuseRadioRequestBeaconStart,
     FuseRadioRequestBeaconStop,
+    FuseRadioRequestBleGatt,
 } FuseRadioRequest;
 
 typedef enum {
@@ -127,6 +128,8 @@ typedef enum {
     FuseRadioCustomEventWifiBeaconStarted,
     FuseRadioCustomEventWifiBeaconDone,
     FuseRadioCustomEventWifiBeaconFailed,
+    FuseRadioCustomEventBleGattDone,
+    FuseRadioCustomEventBleGattFailed,
 } FuseRadioCustomEvent;
 
 typedef enum {
@@ -255,6 +258,8 @@ struct FuseRadioApp {
     FuseRadioSavedBleResults saved_ble_results;
     FuseRadioBleSelection ble_selection;
     FuseRadioBleScanMode ble_scan_mode;
+    FuseRadioGattResults gatt_results;
+    uint8_t ble_gatt_selected_svc;
 
     uint32_t ble_scan_started_at;
     uint32_t detect_started_at;
@@ -276,6 +281,7 @@ struct FuseRadioApp {
     bool mdns_dirty;
     bool promiscuous_dirty;
     bool scan_dirty;
+    bool gatt_dirty;
 };
 
 void fuse_radio_app_set_status(FuseRadioApp* app, const char* detail);
@@ -287,6 +293,7 @@ void fuse_radio_app_retry_session(FuseRadioApp* app);
 bool fuse_radio_app_send_ping(FuseRadioApp* app);
 bool fuse_radio_app_start_wifi_scan(FuseRadioApp* app);
 bool fuse_radio_app_start_ble_scan(FuseRadioApp* app);
+bool fuse_radio_app_start_ble_gatt(FuseRadioApp* app);
 void fuse_radio_app_set_ble_scan_mode(FuseRadioApp* app, FuseRadioBleScanMode mode);
 FuseRadioBleScanMode fuse_radio_app_get_ble_scan_mode(FuseRadioApp* app);
 bool fuse_radio_app_select_ble_scan_device(FuseRadioApp* app);
@@ -313,6 +320,8 @@ void fuse_radio_app_refresh_status_widget(FuseRadioApp* app);
 void fuse_radio_app_refresh_ble_scan_view(FuseRadioApp* app);
 void fuse_radio_app_refresh_saved_ble_view(FuseRadioApp* app);
 void fuse_radio_app_refresh_ble_info_widget(FuseRadioApp* app);
+void fuse_radio_app_refresh_gatt_services_submenu(FuseRadioApp* app);
+void fuse_radio_app_refresh_gatt_chrs_widget(FuseRadioApp* app);
 void fuse_radio_app_refresh_wifi_info_widget(FuseRadioApp* app);
 void fuse_radio_app_refresh_http_widget(FuseRadioApp* app);
 void fuse_radio_app_refresh_mdns_widget(FuseRadioApp* app);

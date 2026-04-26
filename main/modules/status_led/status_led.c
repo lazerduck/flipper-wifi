@@ -25,6 +25,78 @@ typedef struct {
 static bool s_status_led_initialized = false;
 static rmt_channel_handle_t s_status_led_channel = NULL;
 static rmt_encoder_handle_t s_status_led_encoder = NULL;
+static wifi_manager_status_t s_status_led_wifi_status = {
+    .mode = WIFI_MANAGER_MODE_IDLE,
+    .action = WIFI_MANAGER_ACTION_NONE,
+};
+static status_led_ble_state_t s_status_led_ble_state = STATUS_LED_BLE_STATE_IDLE;
+
+static ws2812_pixel_t status_led_pixel_from_state(void)
+{
+    ws2812_pixel_t pixel = {
+        .green = 3,
+        .red = 3,
+        .blue = 3,
+    };
+
+    if (s_status_led_ble_state != STATUS_LED_BLE_STATE_IDLE) {
+        switch (s_status_led_ble_state) {
+        case STATUS_LED_BLE_STATE_SCANNING:
+            pixel.green = 0;
+            pixel.red = 16;
+            pixel.blue = 8;
+            break;
+        case STATUS_LED_BLE_STATE_CONNECTING:
+            pixel.green = 4;
+            pixel.red = 2;
+            pixel.blue = 16;
+            break;
+        case STATUS_LED_BLE_STATE_GATT_ACTIVE:
+            pixel.green = 16;
+            pixel.red = 0;
+            pixel.blue = 16;
+            break;
+        case STATUS_LED_BLE_STATE_IDLE:
+        default:
+            break;
+        }
+        return pixel;
+    }
+
+    switch (s_status_led_wifi_status.action) {
+    case WIFI_MANAGER_ACTION_SCANNING:
+        pixel.green = 12;
+        pixel.red = 16;
+        pixel.blue = 0;
+        break;
+    case WIFI_MANAGER_ACTION_CONNECTING:
+    case WIFI_MANAGER_ACTION_DISCONNECTING:
+        pixel.green = 8;
+        pixel.red = 6;
+        pixel.blue = 0;
+        break;
+    default:
+        break;
+    }
+
+    switch (s_status_led_wifi_status.mode) {
+    case WIFI_MANAGER_MODE_CONNECTED:
+        pixel.green = 16;
+        pixel.red = 0;
+        pixel.blue = 0;
+        break;
+    case WIFI_MANAGER_MODE_PROMISCUOUS:
+        pixel.green = 0;
+        pixel.red = 0;
+        pixel.blue = 16;
+        break;
+    case WIFI_MANAGER_MODE_IDLE:
+    default:
+        break;
+    }
+
+    return pixel;
+}
 
 static esp_err_t status_led_write_pixel(ws2812_pixel_t pixel)
 {
@@ -123,47 +195,16 @@ bool status_led_is_ready(void)
 
 esp_err_t status_led_apply_wifi_status(const wifi_manager_status_t *status)
 {
-    ws2812_pixel_t pixel = {
-        .green = 3,
-        .red = 3,
-        .blue = 3,
-    };
-
     if (status == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
 
-    switch (status->action) {
-    case WIFI_MANAGER_ACTION_SCANNING:
-        pixel.green = 12;
-        pixel.red = 16;
-        pixel.blue = 0;
-        break;
-    case WIFI_MANAGER_ACTION_CONNECTING:
-    case WIFI_MANAGER_ACTION_DISCONNECTING:
-        pixel.green = 8;
-        pixel.red = 6;
-        pixel.blue = 0;
-        break;
-    default:
-        break;
-    }
+    memcpy(&s_status_led_wifi_status, status, sizeof(s_status_led_wifi_status));
+    return status_led_write_pixel(status_led_pixel_from_state());
+}
 
-    switch (status->mode) {
-    case WIFI_MANAGER_MODE_CONNECTED:
-        pixel.green = 16;
-        pixel.red = 0;
-        pixel.blue = 0;
-        break;
-    case WIFI_MANAGER_MODE_PROMISCUOUS:
-        pixel.green = 0;
-        pixel.red = 0;
-        pixel.blue = 16;
-        break;
-    case WIFI_MANAGER_MODE_IDLE:
-    default:
-        break;
-    }
-
-    return status_led_write_pixel(pixel);
+esp_err_t status_led_set_ble_state(status_led_ble_state_t state)
+{
+    s_status_led_ble_state = state;
+    return status_led_write_pixel(status_led_pixel_from_state());
 }

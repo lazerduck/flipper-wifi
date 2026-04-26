@@ -44,7 +44,7 @@ ERR UNKNOWN_COMMAND
 | Command | Status | Purpose |
 | --- | --- | --- |
 | `PING` | Implemented | Link test / keepalive |
-| `BLE <SCAN|STATUS|GATT ...>` | Partial | BLE scan is implemented; status and GATT remain reserved |
+| `BLE <SCAN|STATUS|GATT ...>` | Partial | BLE scan and GATT inspect are implemented; status remains reserved |
 | `WIFI SCAN` | Implemented | Scan nearby APs |
 | `WIFI CONNECT ssid=<ssid> psw=<password>` | Implemented | Start STA connection |
 | `WIFI STATUS` | Implemented | Read current STA state |
@@ -83,7 +83,7 @@ Current shape:
 
 - `BLE SCAN` scans nearby BLE advertisers and returns a compact device list
 - `BLE STATUS` is reserved for future BLE mode or activity reporting
-- `BLE GATT ...` is reserved for later per-device inspection flows
+- `BLE GATT ...` connects to one device, enumerates GATT services/characteristics, and reads readable values
 
 ### `BLE SCAN`
 
@@ -158,11 +158,48 @@ ERR BLE_STATUS_NOT_IMPLEMENTED
 
 ### `BLE GATT ...`
 
-Reserved for future per-device service and characteristic inspection.
+Connects to a selected BLE device and performs a one-shot GATT inspect pass.
+
+Request:
 
 ```text
-BLE GATT mac=AA:BB:CC:DD:EE:FF
-ERR BLE_GATT_NOT_IMPLEMENTED
+BLE GATT mac=<mac> [addr_type=<PUBLIC|RANDOM|PUBLIC_ID|RANDOM_ID>]
+```
+
+Successful response format:
+
+```text
+BLE_GATT_START <mac>
+BLE_GATT_CONNECTED
+BLE_GATT_SVC <svc_uuid> NAME <name|->
+BLE_GATT_CHR <svc_uuid> <chr_uuid> PROPS <props> NAME <name|->
+BLE_GATT_VAL <svc_uuid> <chr_uuid> <decoded_value>
+...
+BLE_GATT_DONE
+```
+
+Notes:
+
+- The inspect operation is blocking in the command handler.
+- It runs: connect -> discover services -> discover characteristics -> read READ-capable characteristics -> disconnect.
+- `PROPS` may include values like `READ`, `WRITE`, `NOTIFY`, `INDICATE`, and `WRITE_NR`.
+- Known SIG UUIDs are mapped to compact names (for both services and characteristics); unknown UUIDs use their short hex form.
+- Characteristic values are compactly decoded when possible (for example battery level) and otherwise emitted as short text or hex.
+
+Possible failures:
+
+```text
+ERR BLE_GATT_INVALID_ARGS
+ERR BLE_GATT_BUSY
+BLE_GATT_CONNECT_FAILED [status=<code>|stage=timeout]
+BLE_GATT_DISCOVER_FAILED [stage=<svc|chr|disconnect|unknown> status=<code>]
+```
+
+Usage error example:
+
+```text
+BLE GATT
+ERR USAGE BLE GATT mac=<MAC> [addr_type=<PUBLIC|RANDOM|PUBLIC_ID|RANDOM_ID>]
 ```
 
 Unknown BLE subcommands reply with:

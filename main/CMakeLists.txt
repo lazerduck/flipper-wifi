@@ -3,6 +3,7 @@ idf_component_register(
         "main.c"
         "command/command_router.c"
         "modules/ble/ble_command.c"
+        "modules/ble/ble_gatt.c"
         "modules/ble/ble_manager.c"
         "modules/status_led/status_led.c"
         "modules/ping/ping_command.c"
