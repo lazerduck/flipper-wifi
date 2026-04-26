@@ -17,10 +17,11 @@
 /* -----------------------------------------------------------------------
  * Safety note
  * Beacon frames are sent with esp_wifi_80211_tx() which requires the
- * radio to be in STA mode (IDLE).  The channel is fixed for the session
- * and TX power is capped at WIFI_BEACON_TX_POWER_MAX.  A background task
- * auto-stops the session once duration_ms elapses so the caller does not
- * have to issue an explicit BEACON_STOP.
+ * radio to be in STA mode (IDLE).  The channel is fixed for the session.
+ * TX power is not capped during the session; WIFI_BEACON_TX_POWER_MAX
+ * defines the minimum power level (2 dBm) for reference.  A background
+ * task auto-stops the session once duration_ms elapses so the caller does
+ * not have to issue an explicit BEACON_STOP.
  * ----------------------------------------------------------------------- */
 
 #define WIFI_BEACON_TASK_STACK_SIZE     3072U
