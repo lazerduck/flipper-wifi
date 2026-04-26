@@ -6,6 +6,7 @@ idf_component_register(
         "modules/ble/ble_gatt.c"
         "modules/ble/ble_manager.c"
         "modules/status_led/status_led.c"
+        "modules/status_led/status_led_command.c"
         "modules/ping/ping_command.c"
         "modules/wifi/connected/connected_command.c"
         "modules/wifi/connected/wifi_discovery.c"

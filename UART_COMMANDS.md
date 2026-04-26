@@ -314,7 +314,8 @@ Notes:
 - This command only starts the connection attempt. It does not wait for DHCP or report final success over UART.
 - To observe completion, poll `WIFI STATUS`.
 - `ssid` is required and must be non-empty.
-- `psw` is required by the parser, even for open networks.
+- `psw` is optional for open networks; when omitted it defaults to an empty password.
+- `psw=""` is also accepted for open networks.
 - Arguments are parsed as space-separated `key=value` tokens.
 - Values without spaces may be sent unquoted.
 - Values that contain spaces must be wrapped in `"..."`.
@@ -324,6 +325,11 @@ Examples:
 
 ```text
 WIFI CONNECT ssid=OfficeWiFi psw=correcthorsebatterystaple
+WIFI CONNECTING
+```
+
+```text
+WIFI CONNECT ssid=Guest
 WIFI CONNECTING
 ```
 

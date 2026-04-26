@@ -59,6 +59,14 @@ static uint16_t fuse_radio_app_ble_scan_duration_ms(FuseRadioApp* app) {
                                                             FUSE_RADIO_BLE_SCAN_NORMAL_DURATION_MS;
 }
 
+static void fuse_radio_app_reset_led_state(FuseRadioApp* app) {
+    app->led_red = 3U;
+    app->led_green = 3U;
+    app->led_blue = 3U;
+    app->led_manual_override = false;
+    app->led_edit_channel = FuseRadioLedChannelRed;
+}
+
 static bool fuse_radio_app_save_credentials(FuseRadioApp* app) {
     if(!app->storage || !app->credentials_format) {
         return false;
@@ -534,6 +542,27 @@ static void fuse_radio_app_watch_channel_callback(uint8_t channel, void* context
     view_dispatcher_send_custom_event(
         app->view_dispatcher, FuseRadioCustomEventWifiWatchChannelStart);
 }
+
+static void fuse_radio_app_led_value_callback(uint8_t value, void* context) {
+    FuseRadioApp* app = context;
+
+    switch(app->led_edit_channel) {
+    case FuseRadioLedChannelRed:
+        app->led_red = value;
+        break;
+    case FuseRadioLedChannelGreen:
+        app->led_green = value;
+        break;
+    case FuseRadioLedChannelBlue:
+    default:
+        app->led_blue = value;
+        break;
+    }
+
+    app->led_manual_override = true;
+    view_dispatcher_send_custom_event(app->view_dispatcher, FuseRadioCustomEventLedValueSet);
+}
+
 static void fuse_radio_app_watch_live_view_callback(void* context) {
     FuseRadioApp* app = context;
     view_dispatcher_send_custom_event(app->view_dispatcher, FuseRadioCustomEventWifiPromiscuousStop);
@@ -1237,6 +1266,27 @@ FuseRadioBleScanMode fuse_radio_app_get_ble_scan_mode(FuseRadioApp* app) {
 
 static bool fuse_radio_app_send_wifi_scan(FuseRadioApp* app) {
     return fuse_radio_app_send_line(app, "WIFI SCAN\n");
+}
+
+static bool fuse_radio_app_send_led_status(FuseRadioApp* app) {
+    return fuse_radio_app_send_line(app, "LED STATUS\n");
+}
+
+static bool fuse_radio_app_send_led_set(FuseRadioApp* app) {
+    char line[48];
+
+    snprintf(
+        line,
+        sizeof(line),
+        "LED SET red=%u green=%u blue=%u\n",
+        (unsigned)app->led_red,
+        (unsigned)app->led_green,
+        (unsigned)app->led_blue);
+    return fuse_radio_app_send_line(app, line);
+}
+
+static bool fuse_radio_app_send_led_auto(FuseRadioApp* app) {
+    return fuse_radio_app_send_line(app, "LED AUTO\n");
 }
 
 static bool fuse_radio_app_send_ble_scan(FuseRadioApp* app) {
@@ -2398,14 +2448,41 @@ static void fuse_radio_app_handle_error_line(FuseRadioApp* app, const char* line
         return;
     }
 
+    if(app->current_request == FuseRadioRequestLedStatus ||
+       app->current_request == FuseRadioRequestLedSet ||
+       app->current_request == FuseRadioRequestLedAuto) {
+        fuse_radio_app_set_status(app, line);
+        app->current_request = FuseRadioRequestNone;
+        return;
+    }
+
     if(app->module_state != FuseRadioModuleStateDetected) {
         fuse_radio_app_set_error(app, line);
     }
 }
 
+static void fuse_radio_app_parse_led_status(FuseRadioApp* app, const char* line) {
+    const char* mode = strstr(line, "mode=");
+    const char* red = strstr(line, " red=");
+    const char* green = strstr(line, " green=");
+    const char* blue = strstr(line, " blue=");
+
+    if(mode == NULL || red == NULL || green == NULL || blue == NULL) {
+        return;
+    }
+
+    app->led_manual_override = strncmp(mode + 5, "MANUAL", 6) == 0;
+    app->led_red = (uint8_t)strtoul(red + 5, NULL, 10);
+    app->led_green = (uint8_t)strtoul(green + 7, NULL, 10);
+    app->led_blue = (uint8_t)strtoul(blue + 6, NULL, 10);
+}
+
 static void fuse_radio_app_handle_line(FuseRadioApp* app, const char* line) {
     if(strcmp(line, "READY") == 0 || strcmp(line, "PONG") == 0) {
         fuse_radio_app_mark_detected(app);
+    } else if(strncmp(line, "LED STATUS ", 11) == 0) {
+        app->current_request = FuseRadioRequestNone;
+        fuse_radio_app_parse_led_status(app, line);
     } else if(strncmp(line, "BLE_SCAN_START ", 15) == 0) {
         app->current_request = FuseRadioRequestBleScan;
         app->ble_scan_results.active = true;
@@ -3157,6 +3234,44 @@ bool fuse_radio_app_start_wifi_scan(FuseRadioApp* app) {
     return true;
 }
 
+bool fuse_radio_app_request_led_status(FuseRadioApp* app) {
+    furi_assert(app);
+
+    app->current_request = FuseRadioRequestLedStatus;
+    if(!fuse_radio_app_send_led_status(app)) {
+        app->current_request = FuseRadioRequestNone;
+        return false;
+    }
+
+    return true;
+}
+
+bool fuse_radio_app_set_led_manual(FuseRadioApp* app) {
+    furi_assert(app);
+
+    app->current_request = FuseRadioRequestLedSet;
+    app->led_manual_override = true;
+    if(!fuse_radio_app_send_led_set(app)) {
+        app->current_request = FuseRadioRequestNone;
+        return false;
+    }
+
+    return true;
+}
+
+bool fuse_radio_app_set_led_auto(FuseRadioApp* app) {
+    furi_assert(app);
+
+    app->current_request = FuseRadioRequestLedAuto;
+    app->led_manual_override = false;
+    if(!fuse_radio_app_send_led_auto(app)) {
+        app->current_request = FuseRadioRequestNone;
+        return false;
+    }
+
+    return true;
+}
+
 bool fuse_radio_app_start_ble_scan(FuseRadioApp* app) {
     furi_assert(app);
 
@@ -3775,6 +3890,7 @@ FuseRadioApp* fuse_radio_app_alloc(void) {
     app->ble_scan_view = fuse_radio_ble_scan_view_alloc();
     app->text_input = text_input_alloc();
     app->channel_picker_view = fuse_radio_channel_picker_view_alloc();
+    app->value_picker_view = fuse_radio_value_picker_view_alloc();
     app->discover_progress_view = fuse_radio_discover_progress_view_alloc();
     app->discover_result_view = fuse_radio_discover_result_view_alloc();
     app->survey_preset_view = fuse_radio_survey_preset_view_alloc();
@@ -3789,6 +3905,7 @@ FuseRadioApp* fuse_radio_app_alloc(void) {
 
     app->ble_scan_mode = FuseRadioBleScanModeNormal;
     fuse_radio_app_reset_wifi_status(app);
+    fuse_radio_app_reset_led_state(app);
     app->promiscuous_watch_channel = 1U;
     fuse_radio_app_set_status(app, "Preparing module session.");
     fuse_radio_app_load_credentials(app);
@@ -3819,6 +3936,10 @@ FuseRadioApp* fuse_radio_app_alloc(void) {
         app->view_dispatcher,
         FuseRadioViewChannelPicker,
         fuse_radio_channel_picker_view_get_view(app->channel_picker_view));
+    view_dispatcher_add_view(
+        app->view_dispatcher,
+        FuseRadioViewValuePicker,
+        fuse_radio_value_picker_view_get_view(app->value_picker_view));
     view_dispatcher_add_view(
         app->view_dispatcher,
         FuseRadioViewDiscoverProgress,
@@ -3853,6 +3974,8 @@ FuseRadioApp* fuse_radio_app_alloc(void) {
         app->ble_scan_view, fuse_radio_app_ble_scan_view_callback, app);
     fuse_radio_channel_picker_view_set_callback(
         app->channel_picker_view, fuse_radio_app_watch_channel_callback, app);
+    fuse_radio_value_picker_view_set_callback(
+        app->value_picker_view, fuse_radio_app_led_value_callback, app);
     fuse_radio_discover_result_view_set_callback(
         app->discover_result_view, fuse_radio_app_discover_result_view_callback, app);
     fuse_radio_survey_preset_view_set_callback(
@@ -3891,6 +4014,9 @@ void fuse_radio_app_free(FuseRadioApp* app) {
 
     view_dispatcher_remove_view(app->view_dispatcher, FuseRadioViewChannelPicker);
     fuse_radio_channel_picker_view_free(app->channel_picker_view);
+
+    view_dispatcher_remove_view(app->view_dispatcher, FuseRadioViewValuePicker);
+    fuse_radio_value_picker_view_free(app->value_picker_view);
 
     view_dispatcher_remove_view(app->view_dispatcher, FuseRadioViewDiscoverProgress);
     fuse_radio_discover_progress_view_free(app->discover_progress_view);

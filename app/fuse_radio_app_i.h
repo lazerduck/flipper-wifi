@@ -8,6 +8,7 @@
 #include "fuse_radio_survey_preset_view.h"
 #include "fuse_radio_survey_progress_view.h"
 #include "fuse_radio_survey_result_view.h"
+#include "fuse_radio_value_picker_view.h"
 #include "fuse_radio_watch_result_view.h"
 #include "fuse_radio_watch_live_view.h"
 #include "scenes/fuse_radio_scene.h"
@@ -57,6 +58,7 @@ typedef enum {
     FuseRadioViewBleScan,
     FuseRadioViewTextInput,
     FuseRadioViewChannelPicker,
+    FuseRadioViewValuePicker,
     FuseRadioViewDiscoverProgress,
     FuseRadioViewDiscoverResult,
     FuseRadioViewSurveyPreset,
@@ -91,6 +93,9 @@ typedef enum {
     FuseRadioRequestBeaconStart,
     FuseRadioRequestBeaconStop,
     FuseRadioRequestBleGatt,
+    FuseRadioRequestLedStatus,
+    FuseRadioRequestLedSet,
+    FuseRadioRequestLedAuto,
 } FuseRadioRequest;
 
 typedef enum {
@@ -130,7 +135,14 @@ typedef enum {
     FuseRadioCustomEventWifiBeaconFailed,
     FuseRadioCustomEventBleGattDone,
     FuseRadioCustomEventBleGattFailed,
+    FuseRadioCustomEventLedValueSet,
 } FuseRadioCustomEvent;
+
+typedef enum {
+    FuseRadioLedChannelRed,
+    FuseRadioLedChannelGreen,
+    FuseRadioLedChannelBlue,
+} FuseRadioLedChannel;
 
 typedef enum {
     FuseRadioHttpPresetNone,
@@ -179,6 +191,7 @@ struct FuseRadioApp {
     FuseRadioBleScanView* ble_scan_view;
     TextInput* text_input;
     FuseRadioChannelPickerView* channel_picker_view;
+    FuseRadioValuePickerView* value_picker_view;
     FuseRadioDiscoverProgressView* discover_progress_view;
     FuseRadioDiscoverResultView* discover_result_view;
     FuseRadioSurveyPresetView* survey_preset_view;
@@ -245,6 +258,9 @@ struct FuseRadioApp {
     uint8_t survey_selected_channel_index;
     uint8_t watch_device_count;
     uint8_t saved_credential_count;
+    uint8_t led_red;
+    uint8_t led_green;
+    uint8_t led_blue;
     bool wifi_connected;
     bool connect_password_saved;
     bool connect_password_auto_used;
@@ -253,11 +269,13 @@ struct FuseRadioApp {
     bool promiscuous_watch_stop_pending;
     bool beacon_active;
     bool beacon_stop_pending;
+    bool led_manual_override;
 
     FuseRadioSavedCredential saved_credentials[FUSE_RADIO_MAX_SAVED_NETWORKS];
     FuseRadioSavedBleResults saved_ble_results;
     FuseRadioBleSelection ble_selection;
     FuseRadioBleScanMode ble_scan_mode;
+    FuseRadioLedChannel led_edit_channel;
     FuseRadioGattResults gatt_results;
     uint8_t ble_gatt_selected_svc;
 
@@ -301,6 +319,9 @@ bool fuse_radio_app_select_saved_ble_device(FuseRadioApp* app);
 bool fuse_radio_app_save_selected_ble_device(FuseRadioApp* app);
 bool fuse_radio_app_remove_selected_ble_device(FuseRadioApp* app);
 bool fuse_radio_app_request_wifi_status(FuseRadioApp* app);
+bool fuse_radio_app_request_led_status(FuseRadioApp* app);
+bool fuse_radio_app_set_led_manual(FuseRadioApp* app);
+bool fuse_radio_app_set_led_auto(FuseRadioApp* app);
 bool fuse_radio_app_start_wifi_connect(FuseRadioApp* app);
 bool fuse_radio_app_start_wifi_disconnect(FuseRadioApp* app);
 bool fuse_radio_app_start_wifi_discover(FuseRadioApp* app);

@@ -4,6 +4,7 @@
 #include "modules/ping/ping_command.h"
 #include "modules/query/query_command.h"
 #include "modules/send/send_command.h"
+#include "modules/status_led/status_led_command.h"
 #include "modules/wifi/wifi_command.h"
 
 void command_router_dispatch(const char *command_line, const command_context_t *context)
@@ -13,6 +14,10 @@ void command_router_dispatch(const char *command_line, const command_context_t *
     }
 
     if (ping_command_try_handle(command_line, context)) {
+        return;
+    }
+
+    if (status_led_command_try_handle(command_line, context)) {
         return;
     }
 

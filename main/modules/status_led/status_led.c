@@ -17,8 +17,8 @@
 #define STATUS_LED_TX_TIMEOUT_MS 50
 
 typedef struct {
-    uint8_t green;
     uint8_t red;
+    uint8_t green;
     uint8_t blue;
 } ws2812_pixel_t;
 
@@ -30,9 +30,24 @@ static wifi_manager_status_t s_status_led_wifi_status = {
     .action = WIFI_MANAGER_ACTION_NONE,
 };
 static status_led_ble_state_t s_status_led_ble_state = STATUS_LED_BLE_STATE_IDLE;
+static bool s_status_led_manual_override = false;
+static ws2812_pixel_t s_status_led_manual_pixel = {
+    .green = 3,
+    .red = 3,
+    .blue = 3,
+};
+
+static uint8_t status_led_clamp_component(uint8_t value)
+{
+    return value > STATUS_LED_MAX_COMPONENT ? STATUS_LED_MAX_COMPONENT : value;
+}
 
 static ws2812_pixel_t status_led_pixel_from_state(void)
 {
+    if (s_status_led_manual_override) {
+        return s_status_led_manual_pixel;
+    }
+
     ws2812_pixel_t pixel = {
         .green = 3,
         .red = 3,
@@ -207,4 +222,35 @@ esp_err_t status_led_set_ble_state(status_led_ble_state_t state)
 {
     s_status_led_ble_state = state;
     return status_led_write_pixel(status_led_pixel_from_state());
+}
+
+esp_err_t status_led_set_manual_rgb(uint8_t red, uint8_t green, uint8_t blue)
+{
+    s_status_led_manual_pixel.red = status_led_clamp_component(red);
+    s_status_led_manual_pixel.green = status_led_clamp_component(green);
+    s_status_led_manual_pixel.blue = status_led_clamp_component(blue);
+    s_status_led_manual_override = true;
+    return status_led_write_pixel(status_led_pixel_from_state());
+}
+
+esp_err_t status_led_clear_manual_override(void)
+{
+    s_status_led_manual_override = false;
+    return status_led_write_pixel(status_led_pixel_from_state());
+}
+
+esp_err_t status_led_get_state(status_led_state_t *state)
+{
+    ws2812_pixel_t pixel;
+
+    if (state == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    pixel = status_led_pixel_from_state();
+    state->manual_override = s_status_led_manual_override;
+    state->red = pixel.red;
+    state->green = pixel.green;
+    state->blue = pixel.blue;
+    return ESP_OK;
 }

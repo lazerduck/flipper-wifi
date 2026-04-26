@@ -3,6 +3,7 @@
 enum FuseRadioMainMenuIndex {
     FuseRadioMainMenuIndexWifi,
     FuseRadioMainMenuIndexBle,
+    FuseRadioMainMenuIndexLed,
     FuseRadioMainMenuIndexZigbee,
 };
 
@@ -19,6 +20,8 @@ void fuse_radio_scene_main_menu_on_enter(void* context) {
         app->submenu, "WiFi", FuseRadioMainMenuIndexWifi, fuse_radio_scene_main_menu_callback, app);
     submenu_add_item(
         app->submenu, "BLE", FuseRadioMainMenuIndexBle, fuse_radio_scene_main_menu_callback, app);
+    submenu_add_item(
+        app->submenu, "LED", FuseRadioMainMenuIndexLed, fuse_radio_scene_main_menu_callback, app);
     submenu_add_item(
         app->submenu,
         "Zigbee",
@@ -40,6 +43,8 @@ bool fuse_radio_scene_main_menu_on_event(void* context, SceneManagerEvent event)
             scene_manager_next_scene(app->scene_manager, FuseRadioSceneWifiMenu);
         } else if(event.event == FuseRadioMainMenuIndexBle) {
             scene_manager_next_scene(app->scene_manager, FuseRadioSceneBleMenu);
+        } else if(event.event == FuseRadioMainMenuIndexLed) {
+            scene_manager_next_scene(app->scene_manager, FuseRadioSceneLedMenu);
         } else if(event.event == FuseRadioMainMenuIndexZigbee) {
             strncpy(app->placeholder_title, "Zigbee", sizeof(app->placeholder_title) - 1U);
             app->placeholder_title[sizeof(app->placeholder_title) - 1U] = '\0';

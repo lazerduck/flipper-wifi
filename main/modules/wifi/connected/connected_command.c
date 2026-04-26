@@ -43,10 +43,6 @@ static bool copy_quoted_value(const char **cursor, char *value, size_t value_siz
         char current = *read_cursor;
 
         if (current == '"') {
-            if (value_length == 0) {
-                return false;
-            }
-
             value[value_length] = '\0';
             ++read_cursor;
             if (*read_cursor != '\0' && *read_cursor != ' ') {
@@ -237,15 +233,20 @@ bool wifi_connected_command_try_handle(
     if (strcmp(subcommand_name, "CONNECT") == 0) {
         char ssid[WIFI_SSID_MAX_LENGTH];
         char password[WIFI_PASSWORD_MAX_LENGTH];
+        bool has_password;
         esp_err_t err;
 
         memset(ssid, 0, sizeof(ssid));
         memset(password, 0, sizeof(password));
 
-        if (!read_named_arg(args, "ssid", ssid, sizeof(ssid)) ||
-            !read_named_arg(args, "psw", password, sizeof(password))) {
+        if (!read_named_arg(args, "ssid", ssid, sizeof(ssid))) {
             command_context_write_line(context, "ERR USAGE WIFI CONNECT ssid=<ssid> psw=<password>\n");
             return true;
+        }
+
+        has_password = read_named_arg(args, "psw", password, sizeof(password));
+        if (!has_password) {
+            password[0] = '\0';
         }
 
         err = wifi_manager_connect(ssid, password);

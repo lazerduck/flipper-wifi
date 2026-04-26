@@ -27,6 +27,7 @@ bool fuse_radio_scene_wifi_connect_ssid_on_event(void* context, SceneManagerEven
 
             const uint8_t selected_index = fuse_radio_scan_view_get_selected_index(app->scan_view);
             const FuseRadioAccessPoint* ap = &app->scan_results.aps[selected_index];
+            const bool is_open_network = strcmp(ap->auth, "OPEN") == 0;
 
             if(!ap->ssid[0]) {
                 strncpy(
@@ -44,7 +45,7 @@ bool fuse_radio_scene_wifi_connect_ssid_on_event(void* context, SceneManagerEven
             strncpy(app->connect_ssid, ap->ssid, sizeof(app->connect_ssid) - 1U);
             app->connect_ssid[sizeof(app->connect_ssid) - 1U] = '\0';
 
-            const char* saved_password = fuse_radio_app_get_saved_password(app, ap->ssid);
+            const char* saved_password = !is_open_network ? fuse_radio_app_get_saved_password(app, ap->ssid) : NULL;
             if(saved_password) {
                 strncpy(app->connect_password, saved_password, sizeof(app->connect_password) - 1U);
                 app->connect_password[sizeof(app->connect_password) - 1U] = '\0';
@@ -52,6 +53,16 @@ bool fuse_radio_scene_wifi_connect_ssid_on_event(void* context, SceneManagerEven
             } else {
                 memset(app->connect_password, 0, sizeof(app->connect_password));
                 app->connect_password_saved = false;
+            }
+
+            if(is_open_network) {
+                app->connect_password_auto_used = false;
+                if(strcmp(app->skip_auto_password_ssid, ap->ssid) == 0) {
+                    app->skip_auto_password_ssid[0] = '\0';
+                }
+                fuse_radio_app_start_wifi_connect(app);
+                scene_manager_next_scene(app->scene_manager, FuseRadioSceneWifiConnectedMenu);
+                return true;
             }
 
             if(saved_password && strcmp(app->skip_auto_password_ssid, ap->ssid) != 0) {

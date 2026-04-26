@@ -1,5 +1,7 @@
 ADD_SCENE(fuse_radio, status, Status)
 ADD_SCENE(fuse_radio, main_menu, MainMenu)
+ADD_SCENE(fuse_radio, led_menu, LedMenu)
+ADD_SCENE(fuse_radio, led_value, LedValue)
 ADD_SCENE(fuse_radio, ble_menu, BleMenu)
 ADD_SCENE(fuse_radio, ble_scan_preset, BleScanPreset)
 ADD_SCENE(fuse_radio, ble_scan, BleScan)
