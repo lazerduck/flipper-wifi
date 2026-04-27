@@ -53,7 +53,7 @@ ERR UNKNOWN_COMMAND
 | `WIFI HTTP preset=<ip|time|location>` | Implemented | Fetch a preset HTTP-backed network lookup |
 | `WIFI READ_MDNS host=<hostname>` | Implemented | Resolve an mDNS hostname on the connected network |
 | `WIFI PROMISCUOUS <ENTER|EXIT|SURVEY|WATCH|WATCH_STOP>` | Implemented | Enter passive capture mode and run RF observation commands |
-| `WIFI BEACON <START\|STOP> [channel=<1-13>] [duration_ms=<ms>]` | Implemented | Broadcast preset fake beacon SSIDs (idle mode only, ≤60 s, low TX power) |
+| `WIFI BEACON <START\|STOP> [channel=<1-13>] [duration_ms=<ms>]` | Implemented | Broadcast preset fake beacon SSIDs (idle mode only, ≤10 min, default TX power) |
 | `SEND <payload>` | Stub | Reserved, not implemented |
 | `QUERY <request>` | Stub | Reserved, not implemented |
 
@@ -601,7 +601,7 @@ ERR USAGE WIFI PROMISCUOUS <ENTER|EXIT|SURVEY|WATCH|WATCH_STOP>
 
 ### `WIFI BEACON <START|STOP>`
 
-Broadcasts a fixed pack of 8 preset fake beacon SSIDs (e.g. "FBI Surveillance Van", "Pretty Fly for a WiFi") using raw 802.11 frame injection. Requires WiFi to be in idle mode (not connected and not in promiscuous mode). TX power is capped at ~8 dBm and duration is capped at 60 seconds.
+Broadcasts a fixed pack of 8 preset fake beacon SSIDs (e.g. "FBI Surveillance Van", "Pretty Fly for a WiFi") using raw 802.11 frame injection. Requires WiFi to be in idle mode (not connected and not in promiscuous mode). Duration is capped at 600 seconds (10 minutes).
 
 The beacons use locally-administered MAC addresses (first octet `0x02`) so they are clearly distinguishable from real hardware.
 
