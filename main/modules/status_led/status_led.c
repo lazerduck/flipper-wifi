@@ -17,8 +17,8 @@
 #define STATUS_LED_TX_TIMEOUT_MS 50
 
 typedef struct {
-    uint8_t red;
     uint8_t green;
+    uint8_t red;
     uint8_t blue;
 } ws2812_pixel_t;
 

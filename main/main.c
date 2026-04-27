@@ -132,6 +132,13 @@ void app_main(void)
 	memset(command_buffer, 0, sizeof(command_buffer));
 	esp_log_level_set("*", ESP_LOG_NONE);
 	esp_log_level_set("wifi_discovery", ESP_LOG_INFO);
+	esp_log_level_set("sd_card", ESP_LOG_DEBUG);
+	esp_log_level_set("sdmmc_cmd", ESP_LOG_DEBUG);
+	esp_log_level_set("sdmmc_common", ESP_LOG_DEBUG);
+	esp_log_level_set("sdspi_host", ESP_LOG_DEBUG);
+	esp_log_level_set("sdspi_transaction", ESP_LOG_DEBUG);
+	esp_log_level_set("vfs_fat_sdmmc", ESP_LOG_DEBUG);
+	esp_log_level_set("diskio_sdmmc", ESP_LOG_DEBUG);
 
 	led_err = status_led_init();
 	if (led_err == ESP_OK) {
