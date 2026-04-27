@@ -4485,13 +4485,13 @@ void fuse_radio_app_handle_tick(FuseRadioApp* app) {
                 (app->watch_summary.has_summary && app->watch_device_count > 0U ?
                      FuseRadioViewWatchResult :
                      FuseRadioViewWidget));
+    }
     if(app->sd_dirty && scene == FuseRadioSceneSdResult) {
         fuse_radio_app_refresh_sd_widget(app);
         view_dispatcher_switch_to_view(app->view_dispatcher, FuseRadioViewWidget);
     }
     if(app->sd_dirty && scene == FuseRadioSceneSdExplore) {
         fuse_radio_app_refresh_sd_explore_submenu(app);
-    }
     }
 }
 
