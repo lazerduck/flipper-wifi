@@ -17,6 +17,7 @@
 #define FUSE_RADIO_BLE_DEVICES_VERSION 2U
 #define FUSE_RADIO_BLE_SCAN_NORMAL_DURATION_MS 5000U
 #define FUSE_RADIO_BLE_SCAN_DEEP_DURATION_MS   30000U
+#define FUSE_RADIO_BLE_DISTANCE_INTERVAL_MS     2500U
 
 static size_t fuse_radio_app_strlcpy(char* dst, const char* src, size_t size) {
     const size_t length = strlen(src);
@@ -65,6 +66,20 @@ static void fuse_radio_app_reset_led_state(FuseRadioApp* app) {
     app->led_blue = 3U;
     app->led_manual_override = false;
     app->led_edit_channel = FuseRadioLedChannelRed;
+}
+
+static void fuse_radio_app_reset_ble_distance_state(FuseRadioApp* app) {
+    app->ble_distance_rssi = -127;
+    app->ble_distance_distance_dm = -1;
+    app->ble_distance_samples = 0U;
+    app->ble_distance_missed_scans = 0U;
+    app->ble_distance_started_at = 0U;
+    app->ble_distance_active = false;
+    app->ble_distance_stop_pending = false;
+    app->ble_distance_seen = false;
+    app->ble_distance_has_error = false;
+    fuse_radio_app_strlcpy(app->ble_distance_trend, "steady", sizeof(app->ble_distance_trend));
+    app->ble_distance_error[0] = '\0';
 }
 
 static bool fuse_radio_app_save_credentials(FuseRadioApp* app) {
@@ -568,6 +583,46 @@ static void fuse_radio_app_watch_live_view_callback(void* context) {
     view_dispatcher_send_custom_event(app->view_dispatcher, FuseRadioCustomEventWifiPromiscuousStop);
 }
 
+static void fuse_radio_app_ble_distance_button_callback(
+    GuiButtonType button,
+    InputType type,
+    void* context) {
+    FuseRadioApp* app = context;
+
+    if(type != InputTypeShort) {
+        return;
+    }
+
+    if(button == GuiButtonTypeCenter) {
+        view_dispatcher_send_custom_event(app->view_dispatcher, FuseRadioCustomEventBleDistanceStop);
+    } else if(button == GuiButtonTypeLeft) {
+        view_dispatcher_send_custom_event(app->view_dispatcher, FuseRadioCustomEventBleDistanceBack);
+    }
+}
+
+static void fuse_radio_app_sd_widget_button_callback(
+    GuiButtonType button,
+    InputType type,
+    void* context) {
+    FuseRadioApp* app = context;
+
+    if(type != InputTypeShort) {
+        return;
+    }
+
+    if(button == GuiButtonTypeCenter) {
+        view_dispatcher_send_custom_event(app->view_dispatcher, FuseRadioCustomEventSdRefresh);
+    } else if(button == GuiButtonTypeRight) {
+        view_dispatcher_send_custom_event(
+            app->view_dispatcher, FuseRadioCustomEventSdFormatConfirm);
+    }
+}
+
+static void fuse_radio_app_sd_explore_submenu_callback(void* context, uint32_t index) {
+    FuseRadioApp* app = context;
+    view_dispatcher_send_custom_event(app->view_dispatcher, index);
+}
+
 void fuse_radio_app_text_input_callback(void* context) {
     FuseRadioApp* app = context;
 
@@ -852,6 +907,101 @@ void fuse_radio_app_refresh_saved_ble_view(FuseRadioApp* app) {
 
     fuse_radio_ble_scan_view_set_mode(app->ble_scan_view, FuseRadioBleScanViewModeSaved);
     fuse_radio_ble_scan_view_set_saved_data(app->ble_scan_view, &app->saved_ble_results);
+    app->ble_dirty = false;
+}
+
+void fuse_radio_app_refresh_ble_distance_widget(FuseRadioApp* app) {
+    furi_assert(app);
+
+    char title[24];
+    char detail[256];
+    char trend[16];
+    char rssi_text[16];
+    char distance_text[20];
+    char signal[8];
+    uint8_t bars = 0U;
+
+    if(app->ble_distance_rssi >= -55) {
+        bars = 4U;
+    } else if(app->ble_distance_rssi >= -67) {
+        bars = 3U;
+    } else if(app->ble_distance_rssi >= -78) {
+        bars = 2U;
+    } else if(app->ble_distance_rssi >= -90) {
+        bars = 1U;
+    }
+
+    for(uint8_t index = 0U; index < 4U; index++) {
+        signal[index] = index < bars ? '#' : '-';
+    }
+    signal[4] = '\0';
+
+    if(app->ble_distance_seen) {
+        snprintf(rssi_text, sizeof(rssi_text), "%d dBm", app->ble_distance_rssi);
+        if(app->ble_distance_distance_dm >= 0) {
+            snprintf(
+                distance_text,
+                sizeof(distance_text),
+                "%lu.%lum",
+                (unsigned long)(app->ble_distance_distance_dm / 10),
+                (unsigned long)(app->ble_distance_distance_dm % 10));
+        } else {
+            snprintf(distance_text, sizeof(distance_text), "--");
+        }
+    } else {
+        snprintf(rssi_text, sizeof(rssi_text), "not seen");
+        snprintf(distance_text, sizeof(distance_text), "--");
+    }
+
+    widget_reset(app->widget);
+
+    snprintf(
+        title,
+        sizeof(title),
+        app->ble_selection.device.has_name ? "Dist %s" : "BLE Distance",
+        app->ble_selection.device.has_name ? app->ble_selection.device.name : "");
+    widget_add_string_element(app->widget, 64, 5, AlignCenter, AlignTop, FontPrimary, title);
+
+    fuse_radio_app_strlcpy(trend, app->ble_distance_trend, sizeof(trend));
+    for(size_t index = 0U; trend[index] != '\0'; index++) {
+        trend[index] = (char)tolower((uint8_t)trend[index]);
+    }
+
+    if(app->ble_distance_has_error && app->ble_distance_error[0]) {
+        snprintf(
+            detail,
+            sizeof(detail),
+            "MAC %s\nError\n%s\n\nCenter: restart",
+            app->ble_selection.device.mac,
+            app->ble_distance_error);
+    } else {
+        snprintf(
+            detail,
+            sizeof(detail),
+            "MAC %s\nRSSI %s  [%s]\nTrend %s\nRough %s\nSamples %u  Miss %u",
+            app->ble_selection.device.mac,
+            rssi_text,
+            signal,
+            trend,
+            distance_text,
+            (unsigned)app->ble_distance_samples,
+            (unsigned)app->ble_distance_missed_scans);
+    }
+
+    widget_add_text_scroll_element(app->widget, 0, 14, 128, 38, detail);
+    widget_add_button_element(
+        app->widget,
+        GuiButtonTypeLeft,
+        "Back",
+        fuse_radio_app_ble_distance_button_callback,
+        app);
+    widget_add_button_element(
+        app->widget,
+        GuiButtonTypeCenter,
+        app->ble_distance_active ? (app->ble_distance_stop_pending ? "Wait" : "Stop") : "Start",
+        fuse_radio_app_ble_distance_button_callback,
+        app);
+
     app->ble_dirty = false;
 }
 
@@ -1296,6 +1446,22 @@ static bool fuse_radio_app_send_ble_scan(FuseRadioApp* app) {
     return fuse_radio_app_send_line(app, line);
 }
 
+static bool fuse_radio_app_send_ble_distance_start(FuseRadioApp* app) {
+    char line[96];
+
+    snprintf(
+        line,
+        sizeof(line),
+        "BLE DISTANCE START mac=%s interval_ms=%u\n",
+        app->ble_selection.device.mac,
+        (unsigned)FUSE_RADIO_BLE_DISTANCE_INTERVAL_MS);
+    return fuse_radio_app_send_line(app, line);
+}
+
+static bool fuse_radio_app_send_ble_distance_stop(FuseRadioApp* app) {
+    return fuse_radio_app_send_line(app, "BLE DISTANCE STOP\n");
+}
+
 static bool fuse_radio_app_send_ble_gatt(FuseRadioApp* app) {
     char line[64];
 
@@ -1476,6 +1642,31 @@ static bool fuse_radio_app_send_wifi_beacon_start_command(
 
 static bool fuse_radio_app_send_wifi_beacon_stop_command(FuseRadioApp* app) {
     return fuse_radio_app_send_line(app, "WIFI BEACON STOP\n");
+}
+
+static bool fuse_radio_app_send_sd_info_command(FuseRadioApp* app) {
+    return fuse_radio_app_send_line(app, "SD INFO\n");
+}
+
+static bool fuse_radio_app_send_sd_list_command(FuseRadioApp* app, const char* path) {
+    char quoted_path[192];
+    char command[256];
+
+    if(!fuse_radio_app_format_quoted_arg(quoted_path, sizeof(quoted_path), path)) {
+        return false;
+    }
+
+    snprintf(
+        command,
+        sizeof(command),
+        "SD LIST path=%s limit=%u\n",
+        quoted_path,
+        (unsigned)FUSE_RADIO_MAX_SD_ENTRIES);
+    return fuse_radio_app_send_line(app, command);
+}
+
+static bool fuse_radio_app_send_sd_format_command(FuseRadioApp* app) {
+    return fuse_radio_app_send_line(app, "SD FORMAT\n");
 }
 
 bool fuse_radio_app_start_wifi_beacon(FuseRadioApp* app, uint8_t channel, uint32_t duration_ms) {
@@ -1888,6 +2079,139 @@ static void fuse_radio_app_parse_http_line(FuseRadioApp* app, const char* line) 
     }
 }
 
+static void fuse_radio_app_format_bytes(char* out, size_t out_size, uint64_t bytes) {
+    static const char* units[] = {"B", "KB", "MB", "GB", "TB"};
+    uint64_t whole = bytes;
+    uint8_t tenth = 0U;
+    size_t unit = 0U;
+
+    while(whole >= 1024U && unit < (sizeof(units) / sizeof(units[0])) - 1U) {
+        tenth = (uint8_t)(((whole % 1024U) * 10U) / 1024U);
+        whole /= 1024U;
+        unit++;
+    }
+
+    if(unit == 0U) {
+        snprintf(out, out_size, "%llu %s", (unsigned long long)bytes, units[unit]);
+    } else if(whole >= 10U || tenth == 0U) {
+        snprintf(out, out_size, "%llu %s", (unsigned long long)whole, units[unit]);
+    } else {
+        snprintf(out, out_size, "%llu.%u %s", (unsigned long long)whole, (unsigned)tenth, units[unit]);
+    }
+}
+
+static void fuse_radio_app_parse_sd_info(FuseRadioApp* app, const char* line) {
+    const char* present = strstr(line, "present=");
+    const char* mounted = strstr(line, " mounted=");
+    const char* total = strstr(line, " total_bytes=");
+    const char* free = strstr(line, " free_bytes=");
+    uint64_t total_bytes = 0U;
+    uint64_t free_bytes = 0U;
+    uint64_t used_bytes = 0U;
+    char total_h[24];
+    char free_h[24];
+    char used_h[24];
+    unsigned used_percent = 0U;
+
+    if(!present || !mounted || !total || !free) {
+        return;
+    }
+
+    total_bytes = strtoull(total + 13, NULL, 10);
+    free_bytes = strtoull(free + 12, NULL, 10);
+    used_bytes = (total_bytes >= free_bytes) ? (total_bytes - free_bytes) : 0U;
+
+    if(total_bytes > 0U) {
+        used_percent = (unsigned)((used_bytes * 100ULL) / total_bytes);
+    }
+
+    fuse_radio_app_format_bytes(total_h, sizeof(total_h), total_bytes);
+    fuse_radio_app_format_bytes(free_h, sizeof(free_h), free_bytes);
+    fuse_radio_app_format_bytes(used_h, sizeof(used_h), used_bytes);
+
+    snprintf(
+        app->sd_info_text,
+        sizeof(app->sd_info_text),
+        "Card: %s\n"
+        "Mounted: %s\n"
+        "Path: %s\n\n"
+        "Total: %s\n"
+        "Free: %s\n"
+        "Used: %s (%u%%)\n\n"
+        "Raw total: %llu\n"
+        "Raw free: %llu",
+        strncmp(present + 8, "yes", 3) == 0 ? "Present" : "Missing",
+        strncmp(mounted + 9, "yes", 3) == 0 ? "Yes" : "No",
+        app->sd_explore_path[0] ? app->sd_explore_path : "/",
+        total_h,
+        free_h,
+        used_h,
+        used_percent,
+        (unsigned long long)total_bytes,
+        (unsigned long long)free_bytes);
+    app->sd_dirty = true;
+}
+
+static void fuse_radio_app_parse_sd_entry(FuseRadioApp* app, const char* line) {
+    const char* type = strstr(line, "type=");
+    const char* size = strstr(line, " size=");
+    const char* name = strstr(line, " name=");
+    char type_text[8] = {0};
+    size_t type_len;
+
+    if(!type || !size || !name || app->sd_entry_count >= FUSE_RADIO_MAX_SD_ENTRIES) {
+        return;
+    }
+
+    type += 5;
+    type_len = (size_t)(size - type);
+    if(type_len >= sizeof(type_text)) {
+        type_len = sizeof(type_text) - 1U;
+    }
+    memcpy(type_text, type, type_len);
+
+    FuseRadioSdEntry* entry = &app->sd_entries[app->sd_entry_count++];
+    entry->is_dir = strcmp(type_text, "dir") == 0;
+    fuse_radio_app_strlcpy(entry->name, name + 6, sizeof(entry->name));
+    app->sd_dirty = true;
+}
+
+static void fuse_radio_app_refresh_sd_explore_submenu(FuseRadioApp* app) {
+    furi_assert(app);
+
+    submenu_reset(app->submenu);
+
+    if(strcmp(app->sd_explore_path, "/") != 0) {
+        submenu_add_item(
+            app->submenu,
+            "..",
+            1000U,
+            fuse_radio_app_sd_explore_submenu_callback,
+            app);
+    }
+
+    if(app->sd_entry_count == 0U) {
+        submenu_add_item(
+            app->submenu,
+            "(empty)",
+            1001U,
+            fuse_radio_app_sd_explore_submenu_callback,
+            app);
+    } else {
+        for(uint8_t index = 0U; index < app->sd_entry_count; index++) {
+            submenu_add_item(
+                app->submenu,
+                app->sd_entries[index].name,
+                index,
+                fuse_radio_app_sd_explore_submenu_callback,
+                app);
+        }
+    }
+
+    view_dispatcher_switch_to_view(app->view_dispatcher, FuseRadioViewSubmenu);
+    app->sd_dirty = false;
+}
+
 static void fuse_radio_app_parse_discover_network_line(FuseRadioApp* app, const char* line) {
     const char* subnet = strstr(line, "subnet=");
     const char* self = strstr(line, " self=");
@@ -2215,6 +2539,39 @@ static bool fuse_radio_app_parse_ble_device_line(FuseRadioApp* app, const char* 
     return true;
 }
 
+static bool fuse_radio_app_parse_ble_distance_sample_line(FuseRadioApp* app, const char* line) {
+    const char* rssi = strstr(line, "rssi=");
+    const char* seen = strstr(line, " seen=");
+    const char* trend = strstr(line, " trend=");
+    const char* dist = strstr(line, " dist_dm=");
+    const char* samples = strstr(line, " samples=");
+
+    if(!rssi || !seen || !trend || !dist || !samples) {
+        return false;
+    }
+
+    app->ble_distance_rssi = (int16_t)strtol(rssi + 5, NULL, 10);
+    app->ble_distance_seen = strtoul(seen + 6, NULL, 10) > 0UL;
+    app->ble_distance_distance_dm = (int16_t)strtol(dist + 9, NULL, 10);
+    app->ble_distance_samples = (uint16_t)strtoul(samples + 9, NULL, 10);
+
+    const char* trend_begin = trend + 7;
+    size_t trend_len = (size_t)(dist - trend_begin);
+    if(trend_len >= sizeof(app->ble_distance_trend)) {
+        trend_len = sizeof(app->ble_distance_trend) - 1U;
+    }
+    memcpy(app->ble_distance_trend, trend_begin, trend_len);
+    app->ble_distance_trend[trend_len] = '\0';
+
+    if(!app->ble_distance_seen) {
+        app->ble_distance_missed_scans++;
+    }
+
+    app->ble_distance_has_error = false;
+    app->ble_dirty = true;
+    return true;
+}
+
 static void fuse_radio_app_parse_wifi_status(FuseRadioApp* app, const char* line) {
     const FuseRadioWifiState previous_wifi_state = app->wifi_state;
     const char* mode = strstr(line, "mode=");
@@ -2353,6 +2710,16 @@ static void fuse_radio_app_handle_error_line(FuseRadioApp* app, const char* line
         return;
     }
 
+    if(app->current_request == FuseRadioRequestBleDistance || app->ble_distance_active) {
+        app->current_request = FuseRadioRequestNone;
+        app->ble_distance_active = false;
+        app->ble_distance_stop_pending = false;
+        app->ble_distance_has_error = true;
+        fuse_radio_app_strlcpy(app->ble_distance_error, line, sizeof(app->ble_distance_error));
+        app->ble_dirty = true;
+        return;
+    }
+
     if(app->current_request == FuseRadioRequestBleScan || app->ble_scan_results.active) {
         app->ble_scan_results.active = false;
         app->ble_scan_results.complete = true;
@@ -2456,6 +2823,12 @@ static void fuse_radio_app_handle_error_line(FuseRadioApp* app, const char* line
         return;
     }
 
+    if(strncmp(line, "ERR SD_", 7) == 0 || app->sd_action != FuseRadioSdActionNone) {
+        fuse_radio_app_strlcpy(app->sd_info_text, line, sizeof(app->sd_info_text));
+        app->sd_dirty = true;
+        return;
+    }
+
     if(app->module_state != FuseRadioModuleStateDetected) {
         fuse_radio_app_set_error(app, line);
     }
@@ -2501,6 +2874,20 @@ static void fuse_radio_app_handle_line(FuseRadioApp* app, const char* line) {
         app->ble_dirty = true;
     } else if(strncmp(line, "BLE_DEVICE ", 11) == 0) {
         fuse_radio_app_parse_ble_device_line(app, line);
+    } else if(strncmp(line, "BLE_DISTANCE_STARTED ", 21) == 0) {
+        app->current_request = FuseRadioRequestBleDistance;
+        app->ble_distance_active = true;
+        app->ble_distance_stop_pending = false;
+        app->ble_distance_started_at = furi_get_tick();
+        app->ble_distance_has_error = false;
+        app->ble_dirty = true;
+    } else if(strncmp(line, "BLE_DISTANCE_SAMPLE ", 20) == 0) {
+        fuse_radio_app_parse_ble_distance_sample_line(app, line);
+    } else if(strncmp(line, "BLE_DISTANCE_DONE", 17) == 0) {
+        app->current_request = FuseRadioRequestNone;
+        app->ble_distance_active = false;
+        app->ble_distance_stop_pending = false;
+        app->ble_dirty = true;
     } else if(strncmp(line, "BLE_SCAN_TRUNCATED ", 19) == 0) {
         app->ble_scan_results.truncated_count = (uint16_t)strtoul(line + 19, NULL, 10);
         app->ble_dirty = true;
@@ -3117,6 +3504,59 @@ static void fuse_radio_app_handle_line(FuseRadioApp* app, const char* line) {
         app->promiscuous_dirty = true;
         view_dispatcher_send_custom_event(
             app->view_dispatcher, FuseRadioCustomEventWifiBeaconDone);
+    } else if(strncmp(line, "SD INFO ", 8) == 0) {
+        fuse_radio_app_parse_sd_info(app, line);
+    } else if(strncmp(line, "SD LIST_BEGIN ", 14) == 0) {
+        const char* path = strstr(line, "path=");
+        app->sd_entry_count = 0U;
+        if(path != NULL) {
+            fuse_radio_app_strlcpy(app->sd_explore_path, path + 5, sizeof(app->sd_explore_path));
+        }
+        snprintf(
+            app->sd_info_text,
+            sizeof(app->sd_info_text),
+            "Path: %s\n\nReading directory...",
+            app->sd_explore_path[0] ? app->sd_explore_path : "/");
+        app->sd_dirty = true;
+    } else if(strncmp(line, "SD ENTRY ", 9) == 0) {
+        fuse_radio_app_parse_sd_entry(app, line);
+    } else if(strncmp(line, "SD LIST_DONE ", 13) == 0) {
+        const char* count = strstr(line, "count=");
+        const char* total = strstr(line, " total=");
+        const char* truncated = strstr(line, " truncated=");
+        unsigned long count_value = count ? strtoul(count + 6, NULL, 10) : 0UL;
+        unsigned long total_value = total ? strtoul(total + 7, NULL, 10) : 0UL;
+        unsigned long truncated_value = truncated ? strtoul(truncated + 11, NULL, 10) : 0UL;
+
+        snprintf(
+            app->sd_info_text,
+            sizeof(app->sd_info_text),
+            "Path: %s\nEntries: %lu/%lu\nTruncated: %lu",
+            app->sd_explore_path[0] ? app->sd_explore_path : "/",
+            count_value,
+            total_value,
+            truncated_value);
+        app->sd_dirty = true;
+    } else if(strcmp(line, "SD FORMAT_START") == 0) {
+        snprintf(app->sd_info_text, sizeof(app->sd_info_text), "Formatting card...\n");
+        app->sd_action = FuseRadioSdActionFormat;
+        app->sd_dirty = true;
+    } else if(strncmp(line, "SD FORMAT_PROGRESS ", 19) == 0) {
+        const char* pct = strstr(line, "pct=");
+        const char* step = strstr(line, " step=");
+        unsigned long pct_value = pct ? strtoul(pct + 4, NULL, 10) : 0UL;
+
+        snprintf(
+            app->sd_info_text,
+            sizeof(app->sd_info_text),
+            "Formatting card...\nProgress: %lu%%\nStep: %s",
+            pct_value,
+            step ? (step + 6) : "-");
+        app->sd_action = FuseRadioSdActionFormat;
+        app->sd_dirty = true;
+    } else if(strncmp(line, "SD FORMAT_DONE ", 15) == 0) {
+        app->sd_confirm_format = false;
+        fuse_radio_app_start_sd_action(app, FuseRadioSdActionDetail);
     } else if(strncmp(line, "ERR ", 4) == 0) {
         fuse_radio_app_handle_error_line(app, line);
     }
@@ -3158,6 +3598,10 @@ bool fuse_radio_app_start_session(FuseRadioApp* app) {
 
 void fuse_radio_app_stop_session(FuseRadioApp* app) {
     furi_assert(app);
+
+    if(app->ble_distance_active && app->serial_handle) {
+        (void)fuse_radio_app_send_ble_distance_stop(app);
+    }
 
     if(app->rx_started && app->serial_handle) {
         furi_hal_serial_async_rx_stop(app->serial_handle);
@@ -3312,6 +3756,70 @@ bool fuse_radio_app_start_ble_scan(FuseRadioApp* app) {
     }
 
     app->ble_dirty = true;
+    return true;
+}
+
+bool fuse_radio_app_start_ble_distance(FuseRadioApp* app) {
+    furi_assert(app);
+
+    if(app->ble_selection.device.mac[0] == '\0') {
+        return false;
+    }
+
+    fuse_radio_app_reset_ble_distance_state(app);
+    app->current_request = FuseRadioRequestBleDistance;
+    app->ble_distance_started_at = furi_get_tick();
+    app->ble_distance_active = true;
+    app->ble_dirty = true;
+
+    if(app->module_state != FuseRadioModuleStateDetected) {
+        app->current_request = FuseRadioRequestNone;
+        app->ble_distance_active = false;
+        app->ble_distance_has_error = true;
+        fuse_radio_app_strlcpy(
+            app->ble_distance_error,
+            "Board is not ready",
+            sizeof(app->ble_distance_error));
+        app->ble_dirty = true;
+        return false;
+    }
+
+    if(!fuse_radio_app_send_ble_distance_start(app)) {
+        app->current_request = FuseRadioRequestNone;
+        app->ble_distance_active = false;
+        app->ble_distance_has_error = true;
+        fuse_radio_app_strlcpy(
+            app->ble_distance_error,
+            "UART write failed",
+            sizeof(app->ble_distance_error));
+        app->ble_dirty = true;
+        return false;
+    }
+
+    return true;
+}
+
+bool fuse_radio_app_stop_ble_distance(FuseRadioApp* app) {
+    furi_assert(app);
+
+    if(!app->ble_distance_active || app->ble_distance_stop_pending) {
+        return false;
+    }
+
+    app->ble_distance_stop_pending = true;
+    app->ble_dirty = true;
+
+    if(!fuse_radio_app_send_ble_distance_stop(app)) {
+        app->ble_distance_stop_pending = false;
+        app->ble_distance_has_error = true;
+        fuse_radio_app_strlcpy(
+            app->ble_distance_error,
+            "Stop command failed",
+            sizeof(app->ble_distance_error));
+        app->ble_dirty = true;
+        return false;
+    }
+
     return true;
 }
 
@@ -3647,6 +4155,105 @@ void fuse_radio_app_refresh_scan_view(FuseRadioApp* app) {
     app->scan_dirty = false;
 }
 
+void fuse_radio_app_refresh_sd_widget(FuseRadioApp* app) {
+    furi_assert(app);
+
+    const char* title = "SD Card";
+    if(app->sd_action == FuseRadioSdActionExplore) {
+        title = "SD Explore";
+    } else if(app->sd_action == FuseRadioSdActionDetail) {
+        title = "SD Detail";
+    } else if(app->sd_action == FuseRadioSdActionFormat) {
+        title = app->sd_confirm_format ? "SD Format?" : "SD Format";
+    }
+
+    widget_reset(app->widget);
+    widget_add_string_element(app->widget, 64, 5, AlignCenter, AlignTop, FontPrimary, title);
+    widget_add_text_scroll_element(app->widget, 0, 14, 128, 38, app->sd_info_text);
+    widget_add_button_element(
+        app->widget,
+        GuiButtonTypeCenter,
+        "Refresh",
+        fuse_radio_app_sd_widget_button_callback,
+        app);
+
+    if(app->sd_action == FuseRadioSdActionDetail || app->sd_action == FuseRadioSdActionFormat ||
+       app->sd_confirm_format) {
+        widget_add_button_element(
+            app->widget,
+            GuiButtonTypeRight,
+            app->sd_confirm_format ? "Confirm" : "Format",
+            fuse_radio_app_sd_widget_button_callback,
+            app);
+    }
+
+    app->sd_dirty = false;
+}
+
+bool fuse_radio_app_start_sd_action(FuseRadioApp* app, FuseRadioSdAction action) {
+    furi_assert(app);
+
+    app->sd_action = action;
+    app->current_request = FuseRadioRequestNone;
+
+    if(app->module_state != FuseRadioModuleStateDetected) {
+        snprintf(app->sd_info_text, sizeof(app->sd_info_text), "Board is not ready.");
+        app->sd_dirty = true;
+        return false;
+    }
+
+    switch(action) {
+    case FuseRadioSdActionExplore:
+        if(app->sd_explore_path[0] == '\0') {
+            snprintf(app->sd_explore_path, sizeof(app->sd_explore_path), "/");
+        }
+        snprintf(
+            app->sd_info_text,
+            sizeof(app->sd_info_text),
+            "Path: %s\n\nLoading directory...",
+            app->sd_explore_path[0] ? app->sd_explore_path : "/");
+        app->sd_entry_count = 0U;
+        app->sd_confirm_format = false;
+        if(!fuse_radio_app_send_sd_list_command(app, app->sd_explore_path)) {
+            snprintf(app->sd_info_text, sizeof(app->sd_info_text), "UART write failed.");
+            app->sd_dirty = true;
+            return false;
+        }
+        break;
+    case FuseRadioSdActionDetail:
+        app->sd_confirm_format = false;
+        snprintf(
+            app->sd_info_text,
+            sizeof(app->sd_info_text),
+            "Reading card status...");
+        if(!fuse_radio_app_send_sd_info_command(app)) {
+            snprintf(app->sd_info_text, sizeof(app->sd_info_text), "UART write failed.");
+            app->sd_dirty = true;
+            return false;
+        }
+        break;
+    case FuseRadioSdActionFormat:
+        snprintf(
+            app->sd_info_text,
+            sizeof(app->sd_info_text),
+            "Formatting card...");
+        app->sd_confirm_format = false;
+        if(!fuse_radio_app_send_sd_format_command(app)) {
+            snprintf(app->sd_info_text, sizeof(app->sd_info_text), "UART write failed.");
+            app->sd_dirty = true;
+            return false;
+        }
+        break;
+    case FuseRadioSdActionNone:
+    default:
+        snprintf(app->sd_info_text, sizeof(app->sd_info_text), "No SD action selected.");
+        break;
+    }
+
+    app->sd_dirty = true;
+    return true;
+}
+
 static bool fuse_radio_app_scene_requires_connected(uint32_t scene) {
     return scene == FuseRadioSceneWifiConnectedMenu ||
            scene == FuseRadioSceneWifiDiscoverProgress ||
@@ -3822,6 +4429,10 @@ void fuse_radio_app_handle_tick(FuseRadioApp* app) {
     if(app->ble_dirty && scene == FuseRadioSceneBleSavedDevices) {
         fuse_radio_app_refresh_saved_ble_view(app);
     }
+    if(app->ble_dirty && scene == FuseRadioSceneBleDistance) {
+        fuse_radio_app_refresh_ble_distance_widget(app);
+        view_dispatcher_switch_to_view(app->view_dispatcher, FuseRadioViewWidget);
+    }
     if(app->scan_dirty &&
        (scene == FuseRadioSceneWifiScan || scene == FuseRadioSceneWifiConnectSsid)) {
         fuse_radio_app_refresh_scan_view(app);
@@ -3874,6 +4485,13 @@ void fuse_radio_app_handle_tick(FuseRadioApp* app) {
                 (app->watch_summary.has_summary && app->watch_device_count > 0U ?
                      FuseRadioViewWatchResult :
                      FuseRadioViewWidget));
+    if(app->sd_dirty && scene == FuseRadioSceneSdResult) {
+        fuse_radio_app_refresh_sd_widget(app);
+        view_dispatcher_switch_to_view(app->view_dispatcher, FuseRadioViewWidget);
+    }
+    if(app->sd_dirty && scene == FuseRadioSceneSdExplore) {
+        fuse_radio_app_refresh_sd_explore_submenu(app);
+    }
     }
 }
 
@@ -3906,6 +4524,7 @@ FuseRadioApp* fuse_radio_app_alloc(void) {
     app->ble_scan_mode = FuseRadioBleScanModeNormal;
     fuse_radio_app_reset_wifi_status(app);
     fuse_radio_app_reset_led_state(app);
+    fuse_radio_app_reset_ble_distance_state(app);
     app->promiscuous_watch_channel = 1U;
     fuse_radio_app_set_status(app, "Preparing module session.");
     fuse_radio_app_load_credentials(app);

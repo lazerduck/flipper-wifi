@@ -43,6 +43,9 @@
 #define FUSE_RADIO_PROMISCUOUS_INFO_SIZE 1024U
 #define FUSE_RADIO_PROMISCUOUS_LIVE_SIZE 192U
 #define FUSE_RADIO_BEACON_INFO_SIZE    256U
+#define FUSE_RADIO_SD_INFO_SIZE        768U
+#define FUSE_RADIO_SD_PATH_SIZE        128U
+#define FUSE_RADIO_MAX_SD_ENTRIES      24U
 #define FUSE_RADIO_DETECT_TIMEOUT_MS  5000U
 #define FUSE_RADIO_PING_INTERVAL_MS   750U
 #define FUSE_RADIO_MODE_GUARD_POLL_MS 1000U
@@ -81,6 +84,7 @@ typedef enum {
     FuseRadioRequestScan,
     FuseRadioRequestStatus,
     FuseRadioRequestBleScan,
+    FuseRadioRequestBleDistance,
     FuseRadioRequestConnect,
     FuseRadioRequestDisconnect,
     FuseRadioRequestDiscover,
@@ -97,6 +101,18 @@ typedef enum {
     FuseRadioRequestLedSet,
     FuseRadioRequestLedAuto,
 } FuseRadioRequest;
+
+typedef enum {
+    FuseRadioSdActionNone,
+    FuseRadioSdActionExplore,
+    FuseRadioSdActionDetail,
+    FuseRadioSdActionFormat,
+} FuseRadioSdAction;
+
+typedef struct {
+    char name[64];
+    bool is_dir;
+} FuseRadioSdEntry;
 
 typedef enum {
     FuseRadioTextInputNone,
@@ -135,6 +151,10 @@ typedef enum {
     FuseRadioCustomEventWifiBeaconFailed,
     FuseRadioCustomEventBleGattDone,
     FuseRadioCustomEventBleGattFailed,
+    FuseRadioCustomEventBleDistanceStop,
+    FuseRadioCustomEventBleDistanceBack,
+    FuseRadioCustomEventSdRefresh,
+    FuseRadioCustomEventSdFormatConfirm,
     FuseRadioCustomEventLedValueSet,
 } FuseRadioCustomEvent;
 
@@ -246,6 +266,8 @@ struct FuseRadioApp {
     char promiscuous_info_text[FUSE_RADIO_PROMISCUOUS_INFO_SIZE];
     char promiscuous_live_text[FUSE_RADIO_PROMISCUOUS_LIVE_SIZE];
     char beacon_info_text[FUSE_RADIO_BEACON_INFO_SIZE];
+    char sd_info_text[FUSE_RADIO_SD_INFO_SIZE];
+    char sd_explore_path[FUSE_RADIO_SD_PATH_SIZE];
     uint16_t wifi_status_reason;
     uint32_t promiscuous_live_elapsed_ms;
     uint32_t promiscuous_live_total_frames;
@@ -278,8 +300,14 @@ struct FuseRadioApp {
     FuseRadioLedChannel led_edit_channel;
     FuseRadioGattResults gatt_results;
     uint8_t ble_gatt_selected_svc;
+    uint8_t sd_entry_count;
+    int16_t ble_distance_rssi;
+    int16_t ble_distance_distance_dm;
+    uint16_t ble_distance_samples;
+    uint16_t ble_distance_missed_scans;
 
     uint32_t ble_scan_started_at;
+    uint32_t ble_distance_started_at;
     uint32_t detect_started_at;
     uint32_t last_ping_at;
     uint32_t last_mode_guard_poll_at;
@@ -300,6 +328,16 @@ struct FuseRadioApp {
     bool promiscuous_dirty;
     bool scan_dirty;
     bool gatt_dirty;
+    bool ble_distance_active;
+    bool ble_distance_stop_pending;
+    bool ble_distance_seen;
+    bool ble_distance_has_error;
+    bool sd_dirty;
+    bool sd_confirm_format;
+    char ble_distance_trend[10];
+    char ble_distance_error[FUSE_RADIO_SCAN_ERROR_SIZE];
+    FuseRadioSdAction sd_action;
+    FuseRadioSdEntry sd_entries[FUSE_RADIO_MAX_SD_ENTRIES];
 };
 
 void fuse_radio_app_set_status(FuseRadioApp* app, const char* detail);
@@ -311,6 +349,8 @@ void fuse_radio_app_retry_session(FuseRadioApp* app);
 bool fuse_radio_app_send_ping(FuseRadioApp* app);
 bool fuse_radio_app_start_wifi_scan(FuseRadioApp* app);
 bool fuse_radio_app_start_ble_scan(FuseRadioApp* app);
+bool fuse_radio_app_start_ble_distance(FuseRadioApp* app);
+bool fuse_radio_app_stop_ble_distance(FuseRadioApp* app);
 bool fuse_radio_app_start_ble_gatt(FuseRadioApp* app);
 void fuse_radio_app_set_ble_scan_mode(FuseRadioApp* app, FuseRadioBleScanMode mode);
 FuseRadioBleScanMode fuse_radio_app_get_ble_scan_mode(FuseRadioApp* app);
@@ -335,11 +375,13 @@ bool fuse_radio_app_stop_wifi_promiscuous_watch(FuseRadioApp* app);
 bool fuse_radio_app_repeat_wifi_promiscuous_action(FuseRadioApp* app);
 bool fuse_radio_app_start_wifi_beacon(FuseRadioApp* app, uint8_t channel, uint32_t duration_ms);
 bool fuse_radio_app_stop_wifi_beacon(FuseRadioApp* app);
+bool fuse_radio_app_start_sd_action(FuseRadioApp* app, FuseRadioSdAction action);
 void fuse_radio_app_process_rx(FuseRadioApp* app);
 void fuse_radio_app_handle_tick(FuseRadioApp* app);
 void fuse_radio_app_refresh_status_widget(FuseRadioApp* app);
 void fuse_radio_app_refresh_ble_scan_view(FuseRadioApp* app);
 void fuse_radio_app_refresh_saved_ble_view(FuseRadioApp* app);
+void fuse_radio_app_refresh_ble_distance_widget(FuseRadioApp* app);
 void fuse_radio_app_refresh_ble_info_widget(FuseRadioApp* app);
 void fuse_radio_app_refresh_gatt_services_submenu(FuseRadioApp* app);
 void fuse_radio_app_refresh_gatt_chrs_widget(FuseRadioApp* app);
@@ -348,5 +390,6 @@ void fuse_radio_app_refresh_http_widget(FuseRadioApp* app);
 void fuse_radio_app_refresh_mdns_widget(FuseRadioApp* app);
 void fuse_radio_app_refresh_promiscuous_widget(FuseRadioApp* app);
 void fuse_radio_app_refresh_scan_view(FuseRadioApp* app);
+void fuse_radio_app_refresh_sd_widget(FuseRadioApp* app);
 const char* fuse_radio_app_get_saved_password(FuseRadioApp* app, const char* ssid);
 bool fuse_radio_app_store_saved_credential(FuseRadioApp* app, const char* ssid, const char* password);

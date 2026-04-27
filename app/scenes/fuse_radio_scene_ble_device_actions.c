@@ -3,6 +3,7 @@
 enum FuseRadioBleDeviceActionIndex {
     FuseRadioBleDeviceActionIndexInfo,
     FuseRadioBleDeviceActionIndexSaveToggle,
+    FuseRadioBleDeviceActionIndexDistance,
     FuseRadioBleDeviceActionIndexScanNearby,
     FuseRadioBleDeviceActionIndexGattInspect,
 };
@@ -30,6 +31,14 @@ void fuse_radio_scene_ble_device_actions_on_enter(void* context) {
         FuseRadioBleDeviceActionIndexSaveToggle,
         fuse_radio_scene_ble_device_actions_callback,
         app);
+    if(app->ble_selection.is_saved) {
+        submenu_add_item(
+            app->submenu,
+            "Distance Mode",
+            FuseRadioBleDeviceActionIndexDistance,
+            fuse_radio_scene_ble_device_actions_callback,
+            app);
+    }
     submenu_add_item(
         app->submenu,
         "Scan Nearby",
@@ -64,6 +73,9 @@ bool fuse_radio_scene_ble_device_actions_on_event(void* context, SceneManagerEve
                 fuse_radio_app_save_selected_ble_device(app);
             }
             scene_manager_previous_scene(app->scene_manager);
+            return true;
+        case FuseRadioBleDeviceActionIndexDistance:
+            scene_manager_next_scene(app->scene_manager, FuseRadioSceneBleDistance);
             return true;
         case FuseRadioBleDeviceActionIndexScanNearby:
             scene_manager_next_scene(app->scene_manager, FuseRadioSceneBleScanPreset);
