@@ -18,7 +18,9 @@ idf_component_register(
         "modules/wifi/beacon/wifi_beacon.c"
         "modules/wifi/wifi_command.c"
         "modules/wifi/wifi_manager.c"
+        "modules/sd/sd_card_manager.c"
+        "modules/sd/sd_command.c"
         "modules/send/send_command.c"
         "modules/query/query_command.c"
     INCLUDE_DIRS "."
-    REQUIRES bt esp_driver_gpio esp_driver_rmt esp_driver_uart esp_event esp_http_client esp_netif esp_timer esp_wifi lwip nvs_flash)
+    REQUIRES bt esp_driver_gpio esp_driver_rmt esp_driver_uart esp_event esp_http_client esp_netif esp_timer esp_wifi fatfs lwip nvs_flash)

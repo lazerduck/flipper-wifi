@@ -3,6 +3,7 @@
 #include "modules/ble/ble_command.h"
 #include "modules/ping/ping_command.h"
 #include "modules/query/query_command.h"
+#include "modules/sd/sd_command.h"
 #include "modules/send/send_command.h"
 #include "modules/status_led/status_led_command.h"
 #include "modules/wifi/wifi_command.h"
@@ -34,6 +35,10 @@ void command_router_dispatch(const char *command_line, const command_context_t *
     }
 
     if (query_command_try_handle(command_line, context)) {
+        return;
+    }
+
+    if (sd_command_try_handle(command_line, context)) {
         return;
     }
 
