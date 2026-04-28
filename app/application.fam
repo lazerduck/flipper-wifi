@@ -4,5 +4,6 @@ App(
     apptype=FlipperAppType.EXTERNAL,
     entry_point="fuse_radio_app",
     requires=["gui"],
+    fap_icon="icon.png",
     fap_category="Tools",
 )

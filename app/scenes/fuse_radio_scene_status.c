@@ -3,7 +3,7 @@
 void fuse_radio_scene_status_on_enter(void* context) {
     FuseRadioApp* app = context;
     fuse_radio_app_refresh_status_widget(app);
-    view_dispatcher_switch_to_view(app->view_dispatcher, FuseRadioViewWidget);
+    view_dispatcher_switch_to_view(app->view_dispatcher, FuseRadioViewStartup);
 }
 
 bool fuse_radio_scene_status_on_event(void* context, SceneManagerEvent event) {
@@ -25,5 +25,5 @@ bool fuse_radio_scene_status_on_event(void* context, SceneManagerEvent event) {
 
 void fuse_radio_scene_status_on_exit(void* context) {
     FuseRadioApp* app = context;
-    widget_reset(app->widget);
+    UNUSED(app);
 }

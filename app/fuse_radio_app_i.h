@@ -5,6 +5,7 @@
 #include "fuse_radio_channel_picker_view.h"
 #include "fuse_radio_discover_progress_view.h"
 #include "fuse_radio_discover_result_view.h"
+#include "fuse_radio_startup_view.h"
 #include "fuse_radio_survey_preset_view.h"
 #include "fuse_radio_survey_progress_view.h"
 #include "fuse_radio_survey_result_view.h"
@@ -55,6 +56,7 @@
 #define FUSE_RADIO_STARTUP_MAX_POWER_RETRIES 3U
 
 typedef enum {
+    FuseRadioViewStartup,
     FuseRadioViewWidget,
     FuseRadioViewSubmenu,
     FuseRadioViewScan,
@@ -207,6 +209,7 @@ struct FuseRadioApp {
 
     Widget* widget;
     Submenu* submenu;
+    FuseRadioStartupView* startup_view;
     FuseRadioScanView* scan_view;
     FuseRadioBleScanView* ble_scan_view;
     TextInput* text_input;

@@ -637,13 +637,13 @@ void fuse_radio_app_text_input_callback(void* context) {
     }
 }
 
-static void
-    fuse_radio_app_status_button_callback(GuiButtonType button, InputType type, void* context) {
+static void fuse_radio_app_startup_view_callback(void* context) {
     FuseRadioApp* app = context;
 
-    if(button == GuiButtonTypeCenter && type == InputTypeShort) {
-        view_dispatcher_send_custom_event(
-            app->view_dispatcher, FuseRadioCustomEventRetryDetection);
+    if(app->module_state == FuseRadioModuleStateError) {
+        view_dispatcher_send_custom_event(app->view_dispatcher, FuseRadioCustomEventRetryDetection);
+    } else if(app->module_state == FuseRadioModuleStateDetected) {
+        view_dispatcher_send_custom_event(app->view_dispatcher, FuseRadioCustomEventModuleDetected);
     }
 }
 
@@ -4032,33 +4032,15 @@ bool fuse_radio_app_remove_selected_ble_device(FuseRadioApp* app) {
 void fuse_radio_app_refresh_status_widget(FuseRadioApp* app) {
     furi_assert(app);
 
-    widget_reset(app->widget);
-    widget_add_string_element(
-        app->widget, 64, 6, AlignCenter, AlignTop, FontPrimary, "Fuse Radio");
-
-    const char* headline = "Starting";
-    const char* detail = app->status_detail;
-
-    if(app->module_state == FuseRadioModuleStatePowering) {
-        headline = "Powering ESP";
-    } else if(app->module_state == FuseRadioModuleStateWaitingReady) {
-        headline = "Checking Link";
-    } else if(app->module_state == FuseRadioModuleStateDetected) {
-        headline = "Board Ready";
-    } else if(app->module_state == FuseRadioModuleStateError) {
-        headline = "No Module";
-        detail = app->last_error;
-    }
-
-    widget_add_string_multiline_element(
-        app->widget, 64, 28, AlignCenter, AlignCenter, FontSecondary, headline);
-    widget_add_string_multiline_element(
-        app->widget, 64, 44, AlignCenter, AlignCenter, FontSecondary, detail);
+    FuseRadioStartupState startup_state = FuseRadioStartupStateBooting;
 
     if(app->module_state == FuseRadioModuleStateError) {
-        widget_add_button_element(
-            app->widget, GuiButtonTypeCenter, "Retry", fuse_radio_app_status_button_callback, app);
+        startup_state = FuseRadioStartupStateError;
+    } else if(app->module_state == FuseRadioModuleStateDetected) {
+        startup_state = FuseRadioStartupStateReady;
     }
+
+    fuse_radio_startup_view_set_state(app->startup_view, startup_state);
 
     app->status_dirty = false;
 }
@@ -4418,8 +4400,12 @@ void fuse_radio_app_handle_tick(FuseRadioApp* app) {
     const uint32_t scene = scene_manager_get_current_scene(app->scene_manager);
     fuse_radio_app_handle_scene_mode_guard(app, scene);
 
-    if(app->status_dirty && scene == FuseRadioSceneStatus) {
-        fuse_radio_app_refresh_status_widget(app);
+    if(scene == FuseRadioSceneStatus) {
+        if(app->status_dirty) {
+            fuse_radio_app_refresh_status_widget(app);
+        } else {
+            fuse_radio_startup_view_advance_animation(app->startup_view);
+        }
     }
     if(app->ble_dirty && scene == FuseRadioSceneBleScan) {
         fuse_radio_app_refresh_ble_scan_view(app);
@@ -4504,6 +4490,7 @@ FuseRadioApp* fuse_radio_app_alloc(void) {
     app->scene_manager = scene_manager_alloc(&fuse_radio_scene_handlers, app);
     app->widget = widget_alloc();
     app->submenu = submenu_alloc();
+    app->startup_view = fuse_radio_startup_view_alloc();
     app->scan_view = fuse_radio_scan_view_alloc();
     app->ble_scan_view = fuse_radio_ble_scan_view_alloc();
     app->text_input = text_input_alloc();
@@ -4539,6 +4526,10 @@ FuseRadioApp* fuse_radio_app_alloc(void) {
         app->view_dispatcher, fuse_radio_app_tick_event_callback, 100U);
     view_dispatcher_attach_to_gui(app->view_dispatcher, app->gui, ViewDispatcherTypeFullscreen);
 
+    view_dispatcher_add_view(
+        app->view_dispatcher,
+        FuseRadioViewStartup,
+        fuse_radio_startup_view_get_view(app->startup_view));
     view_dispatcher_add_view(
         app->view_dispatcher, FuseRadioViewWidget, widget_get_view(app->widget));
     view_dispatcher_add_view(
@@ -4595,6 +4586,8 @@ FuseRadioApp* fuse_radio_app_alloc(void) {
         app->channel_picker_view, fuse_radio_app_watch_channel_callback, app);
     fuse_radio_value_picker_view_set_callback(
         app->value_picker_view, fuse_radio_app_led_value_callback, app);
+    fuse_radio_startup_view_set_callback(
+        app->startup_view, fuse_radio_app_startup_view_callback, app);
     fuse_radio_discover_result_view_set_callback(
         app->discover_result_view, fuse_radio_app_discover_result_view_callback, app);
     fuse_radio_survey_preset_view_set_callback(
@@ -4621,6 +4614,9 @@ void fuse_radio_app_free(FuseRadioApp* app) {
     furi_assert(app);
 
     fuse_radio_app_stop_session(app);
+
+    view_dispatcher_remove_view(app->view_dispatcher, FuseRadioViewStartup);
+    fuse_radio_startup_view_free(app->startup_view);
 
     view_dispatcher_remove_view(app->view_dispatcher, FuseRadioViewScan);
     fuse_radio_scan_view_free(app->scan_view);
