@@ -1,4 +1,5 @@
 #include "fuse_radio_startup_view.h"
+#include "fuse_radio_icons.h"
 
 #include <gui/canvas.h>
 #include <gui/elements.h>
@@ -40,34 +41,16 @@ static const char* fuse_radio_startup_view_headline(FuseRadioStartupState state)
     return "Boot sequence";
 }
 
-static void fuse_radio_startup_view_draw_backdrop(Canvas* canvas, uint8_t frame) {
-    const uint8_t phase = (uint8_t)(frame % 8U);
-    const uint8_t sweep_x = (uint8_t)(12U + phase * 13U);
+static const Icon* fuse_radio_startup_view_get_splash_icon(uint8_t frame) {
+    const uint8_t image_index = (uint8_t)((frame / 3U) % 3U);
 
-    canvas_draw_frame(canvas, 0, 0, 128, 64);
-    canvas_draw_rframe(canvas, 3, 3, 122, 58, 2);
-    canvas_draw_line(canvas, 8, 17, 120, 17);
-    canvas_draw_line(canvas, 8, 37, 120, 37);
-
-    for(uint8_t x = 10U; x < 120U; x += 10U) {
-        canvas_draw_dot(canvas, x, 14);
-        if(((x / 10U) + phase) % 3U == 0U) {
-            canvas_draw_dot(canvas, x, 39);
-        }
-    }
-
-    canvas_draw_rbox(canvas, 10, 43, 108, 5, 2);
-    canvas_draw_box(canvas, sweep_x, 44, 14, 3);
-
-    canvas_draw_frame(canvas, 12, 20, 18, 14);
-    canvas_draw_line(canvas, 14, 31, 20, 23);
-    canvas_draw_line(canvas, 20, 23, 24, 26);
-    canvas_draw_line(canvas, 24, 26, 27, 22);
-
-    if((phase % 2U) == 0U) {
-        canvas_draw_box(canvas, 112, 8, 8, 4);
-    } else {
-        canvas_draw_frame(canvas, 112, 8, 8, 4);
+    switch(image_index) {
+    case 1U:
+        return &I_splash2;
+    case 2U:
+        return &I_splash3;
+    default:
+        return &I_splash1;
     }
 }
 
@@ -76,15 +59,9 @@ static void fuse_radio_startup_view_draw_callback(Canvas* canvas, void* model) {
     const bool show_action = view_model->state != FuseRadioStartupStateBooting;
 
     canvas_clear(canvas);
-    fuse_radio_startup_view_draw_backdrop(canvas, view_model->animation_frame);
+    canvas_draw_icon(canvas, 0, 0, fuse_radio_startup_view_get_splash_icon(view_model->animation_frame));
 
-    canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str(canvas, 36, 27, "FUSE RADIO");
-
-    canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 36, 35, fuse_radio_startup_view_headline(view_model->state));
-
-    canvas_draw_rframe(canvas, 34, 43, 60, 16, 2);
+    canvas_draw_rframe(canvas, 79, 45, 46, 16, 2);
     if(view_model->state == FuseRadioStartupStateError) {
         canvas_set_font(canvas, FontPrimary);
     } else {
@@ -92,16 +69,20 @@ static void fuse_radio_startup_view_draw_callback(Canvas* canvas, void* model) {
     }
     elements_multiline_text_aligned(
         canvas,
-        64,
-        52,
+        102,
+        53,
         AlignCenter,
         AlignCenter,
         fuse_radio_startup_view_state_label(view_model->state));
 
+    if(view_model->state == FuseRadioStartupStateBooting) {
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, 82, 42, fuse_radio_startup_view_headline(view_model->state));
+    }
+
     if(show_action) {
-        elements_button_center(
-            canvas,
-            view_model->state == FuseRadioStartupStateError ? "Retry" : "Enter");
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, 83, 42, "OK");
     }
 }
 
