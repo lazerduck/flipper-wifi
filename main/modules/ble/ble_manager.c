@@ -1167,3 +1167,110 @@ esp_err_t ble_manager_scan(uint16_t duration_ms, ble_scan_result_writer_t write_
     xSemaphoreGive(s_ble_scan_mutex);
     return ESP_OK;
 }
+
+/* ---------------------------------------------------------------------------
+ * Continuous streaming scan
+ * ---------------------------------------------------------------------------
+ * Fires on_adv for every raw advertisement received (filter_duplicates=0).
+ * Blocks until *stop is set true by another task, at which point it cancels
+ * the NimBLE scan and returns once the DISC_COMPLETE event fires.
+ * ---------------------------------------------------------------------------*/
+
+typedef struct {
+    ble_stream_cb_t on_adv;
+    void *cb_context;
+    const volatile bool *stop_flag;
+    SemaphoreHandle_t done_semaphore;
+} ble_stream_session_t;
+
+static int ble_manager_gap_event_stream(struct ble_gap_event *event, void *arg)
+{
+    ble_stream_session_t *session = (ble_stream_session_t *)arg;
+
+    if (session == NULL) {
+        return 0;
+    }
+
+    switch (event->type) {
+    case BLE_GAP_EVENT_DISC:
+        if (session->on_adv != NULL) {
+            session->on_adv(
+                &event->disc.addr,
+                event->disc.rssi,
+                event->disc.data,
+                event->disc.length_data,
+                session->cb_context);
+        }
+        /* Check stop flag — if set, request scan cancellation so the
+         * DISC_COMPLETE event fires and unblocks the waiting task. */
+        if (session->stop_flag != NULL && *session->stop_flag) {
+            ble_gap_disc_cancel();
+        }
+        return 0;
+
+    case BLE_GAP_EVENT_DISC_COMPLETE:
+        xSemaphoreGive(session->done_semaphore);
+        return 0;
+
+    default:
+        return 0;
+    }
+}
+
+esp_err_t ble_manager_scan_stream(ble_stream_cb_t on_adv, void *context,
+                                  const volatile bool *stop)
+{
+    ble_stream_session_t session = {0};
+    struct ble_gap_disc_params scan_params = {0};
+    uint8_t own_addr_type = BLE_OWN_ADDR_PUBLIC;
+    esp_err_t err;
+    int rc;
+
+    if (on_adv == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    err = ble_manager_init();
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    if (xSemaphoreTake(s_ble_scan_mutex, 0) != pdTRUE) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    session.done_semaphore = xSemaphoreCreateBinary();
+    if (session.done_semaphore == NULL) {
+        xSemaphoreGive(s_ble_scan_mutex);
+        return ESP_ERR_NO_MEM;
+    }
+
+    session.on_adv = on_adv;
+    session.cb_context = context;
+    session.stop_flag = stop;
+
+    rc = ble_hs_id_infer_auto(0, &own_addr_type);
+    if (rc != 0) {
+        vSemaphoreDelete(session.done_semaphore);
+        xSemaphoreGive(s_ble_scan_mutex);
+        return ESP_FAIL;
+    }
+
+    scan_params.passive = 1;
+    scan_params.filter_duplicates = 0; /* see every advertisement */
+
+    /* BLE_HS_FOREVER (INT32_MAX) → scan until explicitly cancelled via ble_gap_disc_cancel() */
+    rc = ble_gap_disc(own_addr_type, BLE_HS_FOREVER, &scan_params, ble_manager_gap_event_stream, &session);
+    if (rc != 0) {
+        vSemaphoreDelete(session.done_semaphore);
+        xSemaphoreGive(s_ble_scan_mutex);
+        return ESP_FAIL;
+    }
+
+    /* Block until DISC_COMPLETE fires (triggered by ble_gap_disc_cancel) */
+    xSemaphoreTake(session.done_semaphore, portMAX_DELAY);
+
+    vSemaphoreDelete(session.done_semaphore);
+    xSemaphoreGive(s_ble_scan_mutex);
+    return ESP_OK;
+}

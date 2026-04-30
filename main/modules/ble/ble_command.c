@@ -11,6 +11,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "host/ble_gap.h"
 #include "modules/ble/ble_manager.h"
 #include "modules/ble/ble_gatt.h"
 #include "modules/status_led/status_led.h"
@@ -32,11 +33,16 @@
 #define BLE_DISTANCE_DEFAULT_TX_POWER_DBM (-59)
 #define BLE_DISTANCE_TASK_STACK_SIZE 4096U
 #define BLE_DISTANCE_TASK_STOP_WAIT_MS 100U
-#define BLE_DISTANCE_TASK_STOP_MAX_POLLS 70U
+#define BLE_DISTANCE_TASK_STOP_MAX_POLLS 30U
+/* Minimum gap between consecutive RSSI samples sent to the Flipper (ms).
+ * The interval_ms argument from the Flipper is clamped to this floor. */
+#define BLE_DISTANCE_MIN_SAMPLE_MS 250U
+/* Emit a "not seen" sample after the target has been absent this long (ms). */
+#define BLE_DISTANCE_NOT_SEEN_REPORT_MS 3000U
 
 typedef struct {
     bool active;
-    bool stop_requested;
+    volatile bool stop_requested;
     TaskHandle_t task_handle;
     char mac[18];
     uint16_t interval_ms;
@@ -45,12 +51,6 @@ typedef struct {
     uint32_t sample_count;
     command_response_writer_t write_response;
 } ble_distance_session_t;
-
-typedef struct {
-    const char *target_mac;
-    int16_t best_rssi;
-    bool found;
-} ble_distance_scan_context_t;
 
 static ble_distance_session_t s_ble_distance_session;
 
@@ -168,42 +168,97 @@ static const char *ble_distance_trend_name(int16_t previous_rssi, int16_t curren
     return "STEADY";
 }
 
-static void ble_distance_scan_line_callback(const char *line, void *context)
+typedef struct {
+    ble_distance_session_t *session;
+    uint32_t last_sample_ms;  /* millis of last emitted sample (0 = never) */
+    uint32_t last_any_ms;     /* millis of last advertisement from any device */
+} ble_distance_stream_ctx_t;
+
+/* Called from the NimBLE host task for every received advertisement.
+ * Filters on the target MAC, rate-limits samples, and emits a
+ * BLE_DISTANCE_SAMPLE line directly over UART (which is mutex-protected).
+ * Also emits a "not seen" sample when the target has been absent too long. */
+static void ble_distance_stream_on_adv(
+    const ble_addr_t *addr,
+    int8_t rssi,
+    const uint8_t *adv_data,
+    uint8_t adv_data_len,
+    void *context)
 {
-    ble_distance_scan_context_t *scan_context = (ble_distance_scan_context_t *)context;
-    const char *mac_begin;
-    const char *rssi_tag;
+    ble_distance_stream_ctx_t *ctx = (ble_distance_stream_ctx_t *)context;
     char mac[18];
-    size_t mac_length;
-    int16_t rssi;
+    char line[128];
+    uint32_t now_ms;
 
-    if (scan_context == NULL || line == NULL || strncmp(line, "BLE_DEVICE ", 11) != 0) {
+    (void)adv_data;
+    (void)adv_data_len;
+
+    if (ctx == NULL || ctx->session == NULL || addr == NULL) {
         return;
     }
 
-    mac_begin = line + 11;
-    rssi_tag = strstr(mac_begin, " RSSI ");
-    if (rssi_tag == NULL) {
+    now_ms = (uint32_t)(xTaskGetTickCount()) * portTICK_PERIOD_MS;
+
+    /* Track that we are receiving any BLE traffic (used for not-seen timeout) */
+    ctx->last_any_ms = now_ms;
+
+    /* Format MAC from address bytes (big-endian display, little-endian storage) */
+    snprintf(
+        mac,
+        sizeof(mac),
+        "%02X:%02X:%02X:%02X:%02X:%02X",
+        addr->val[5], addr->val[4], addr->val[3],
+        addr->val[2], addr->val[1], addr->val[0]);
+
+    if (strcmp(mac, ctx->session->mac) != 0) {
+        /* Not our target — but check whether the target has gone silent */
+        if (ctx->last_sample_ms != 0U &&
+            (now_ms - ctx->last_sample_ms) >= BLE_DISTANCE_NOT_SEEN_REPORT_MS) {
+            ctx->last_sample_ms = now_ms;
+            snprintf(
+                line,
+                sizeof(line),
+                "BLE_DISTANCE_SAMPLE mac=%s rssi=-127 seen=0 trend=LOST dist_dm=-1 samples=%u\n",
+                ctx->session->mac,
+                (unsigned)ctx->session->sample_count);
+            ble_distance_write_line(ctx->session, line);
+        }
         return;
     }
 
-    mac_length = (size_t)(rssi_tag - mac_begin);
-    if (mac_length == 0U || mac_length >= sizeof(mac)) {
+    /* Our target is visible — apply rate limit */
+    const uint16_t min_interval_ms =
+        (ctx->session->interval_ms > BLE_DISTANCE_MIN_SAMPLE_MS)
+            ? ctx->session->interval_ms
+            : BLE_DISTANCE_MIN_SAMPLE_MS;
+
+    if (ctx->last_sample_ms != 0U &&
+        (now_ms - ctx->last_sample_ms) < (uint32_t)min_interval_ms) {
         return;
     }
 
-    memcpy(mac, mac_begin, mac_length);
-    mac[mac_length] = '\0';
+    /* Emit a sample */
+    const int16_t distance_dm =
+        ble_distance_estimate_distance_dm((int16_t)rssi, ctx->session->tx_power_dbm);
+    const char *trend =
+        (ctx->session->sample_count == 0U)
+            ? "STEADY"
+            : ble_distance_trend_name(ctx->session->last_rssi, (int16_t)rssi);
 
-    if (strcmp(mac, scan_context->target_mac) != 0) {
-        return;
-    }
+    ctx->session->sample_count++;
+    ctx->session->last_rssi = (int16_t)rssi;
+    ctx->last_sample_ms = now_ms;
 
-    rssi = (int16_t)strtol(rssi_tag + 6, NULL, 10);
-    if (!scan_context->found || rssi > scan_context->best_rssi) {
-        scan_context->best_rssi = rssi;
-        scan_context->found = true;
-    }
+    snprintf(
+        line,
+        sizeof(line),
+        "BLE_DISTANCE_SAMPLE mac=%s rssi=%d seen=1 trend=%s dist_dm=%d samples=%u\n",
+        ctx->session->mac,
+        (int)rssi,
+        trend,
+        (int)distance_dm,
+        (unsigned)ctx->session->sample_count);
+    ble_distance_write_line(ctx->session, line);
 }
 
 static void ble_distance_task(void *parameter)
@@ -226,61 +281,23 @@ static void ble_distance_task(void *parameter)
 
     (void)status_led_set_ble_state(STATUS_LED_BLE_STATE_SCANNING);
 
-    while (!session->stop_requested) {
-        ble_distance_scan_context_t scan_context = {
-            .target_mac = session->mac,
-            .best_rssi = -127,
-            .found = false,
-        };
-        const esp_err_t err =
-            ble_manager_scan(session->interval_ms, ble_distance_scan_line_callback, &scan_context);
+    ble_distance_stream_ctx_t stream_ctx = {
+        .session = session,
+        .last_sample_ms = 0U,
+        .last_any_ms = 0U,
+    };
 
-        if (err != ESP_OK) {
-            if (err == ESP_ERR_INVALID_STATE) {
-                ble_distance_write_line(session, "ERR BLE_DISTANCE_BUSY\n");
-            } else if (err == ESP_ERR_TIMEOUT) {
-                ble_distance_write_line(session, "ERR BLE_DISTANCE_TIMEOUT\n");
-            } else if (err == ESP_ERR_NO_MEM) {
-                ble_distance_write_line(session, "ERR BLE_DISTANCE_NO_MEM\n");
-            } else {
-                ble_distance_write_line(session, "ERR BLE_DISTANCE_FAILED\n");
-            }
-            break;
-        }
+    const esp_err_t err = ble_manager_scan_stream(
+        ble_distance_stream_on_adv,
+        &stream_ctx,
+        &session->stop_requested);
 
-        if (session->stop_requested) {
-            break;
-        }
-
-        if (scan_context.found) {
-            const int16_t distance_dm =
-                ble_distance_estimate_distance_dm(scan_context.best_rssi, session->tx_power_dbm);
-            const char *trend =
-                session->sample_count == 0U ? "STEADY" :
-                                              ble_distance_trend_name(session->last_rssi, scan_context.best_rssi);
-
-            session->sample_count++;
-            session->last_rssi = scan_context.best_rssi;
-
-            snprintf(
-                line,
-                sizeof(line),
-                "BLE_DISTANCE_SAMPLE mac=%s rssi=%d seen=1 trend=%s dist_dm=%d samples=%u\n",
-                session->mac,
-                (int)scan_context.best_rssi,
-                trend,
-                (int)distance_dm,
-                (unsigned)session->sample_count);
-            ble_distance_write_line(session, line);
-        } else {
-            snprintf(
-                line,
-                sizeof(line),
-                "BLE_DISTANCE_SAMPLE mac=%s rssi=-127 seen=0 trend=LOST dist_dm=-1 samples=%u\n",
-                session->mac,
-                (unsigned)session->sample_count);
-            ble_distance_write_line(session, line);
-        }
+    if (err == ESP_ERR_INVALID_STATE) {
+        ble_distance_write_line(session, "ERR BLE_DISTANCE_BUSY\n");
+    } else if (err == ESP_ERR_NO_MEM) {
+        ble_distance_write_line(session, "ERR BLE_DISTANCE_NO_MEM\n");
+    } else if (err != ESP_OK) {
+        ble_distance_write_line(session, "ERR BLE_DISTANCE_FAILED\n");
     }
 
     (void)status_led_set_ble_state(STATUS_LED_BLE_STATE_IDLE);
@@ -340,6 +357,11 @@ static esp_err_t ble_distance_stop(void)
     }
 
     s_ble_distance_session.stop_requested = true;
+
+    /* Cancel the continuous scan immediately rather than waiting for the
+     * next advertisement to arrive — the DISC_COMPLETE event will fire
+     * and unblock ble_manager_scan_stream() in the distance task. */
+    ble_gap_disc_cancel();
 
     for (uint8_t index = 0U; index < BLE_DISTANCE_TASK_STOP_MAX_POLLS; index++) {
         if (!s_ble_distance_session.active) {

@@ -17,7 +17,7 @@
 #define FUSE_RADIO_BLE_DEVICES_VERSION 2U
 #define FUSE_RADIO_BLE_SCAN_NORMAL_DURATION_MS 5000U
 #define FUSE_RADIO_BLE_SCAN_DEEP_DURATION_MS   30000U
-#define FUSE_RADIO_BLE_DISTANCE_INTERVAL_MS     2500U
+#define FUSE_RADIO_BLE_DISTANCE_INTERVAL_MS     500U
 
 static size_t fuse_radio_app_strlcpy(char* dst, const char* src, size_t size) {
     const size_t length = strlen(src);
