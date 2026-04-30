@@ -182,12 +182,13 @@ BLE_GATT_DONE
 Notes:
 
 - The inspect operation is blocking in the command handler.
-- It runs: connect -> discover services -> discover characteristics -> read READ-capable characteristics -> best-effort subscribe NOTIFY/INDICATE characteristics for a short listen window -> disconnect.
+- It runs: connect -> discover services -> discover characteristics -> read READ-capable characteristics -> disconnect.
 - `PROPS` may include values like `READ`, `WRITE`, `NOTIFY`, `INDICATE`, and `WRITE_NR`.
 - Known SIG UUIDs are mapped to compact names (for both services and characteristics); unknown UUIDs use their short hex form.
 - `BLE_GATT_VAL` is the decoded/user-facing value, while `BLE_GATT_RAW` carries the original raw bytes as contiguous uppercase hex.
 - Characteristic values are compactly decoded when possible (for example battery level) and otherwise emitted as short text or hex.
-- If a characteristic read fails, `BLE_GATT_VAL` may contain `read_err <status>` so permission/auth timing issues are visible instead of silently omitted.
+- If a characteristic read fails, `BLE_GATT_VAL` may contain `read_err <status> <reason>` so permission/auth timing issues are visible instead of silently omitted.
+- Common reasons include: `auth_required`, `authorization_required`, `encryption_required`, `read_not_permitted`, `timeout`, and `not_connected`.
 
 Possible failures:
 

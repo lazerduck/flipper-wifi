@@ -9,7 +9,6 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
-#include "freertos/timers.h"
 #include "host/ble_gap.h"
 #include "host/ble_gatt.h"
 #include "host/ble_hs.h"
@@ -31,7 +30,6 @@
 #define BLE_GATT_LINE_SIZE         128
 #define BLE_GATT_CONNECT_TIMEOUT_MS 5000
 #define BLE_GATT_TOTAL_TIMEOUT_MS  25000
-#define BLE_GATT_LISTEN_WINDOW_MS  1800
 
 /* ---- UUID lookup tables ---- */
 
@@ -144,8 +142,6 @@ typedef enum {
     BLE_GATT_PHASE_DISC_SVCS,
     BLE_GATT_PHASE_DISC_CHRS,
     BLE_GATT_PHASE_READING,
-    BLE_GATT_PHASE_SUBSCRIBING,
-    BLE_GATT_PHASE_LISTENING,
     BLE_GATT_PHASE_DONE,
     BLE_GATT_PHASE_FAILED,
 } ble_gatt_phase_t;
@@ -170,12 +166,7 @@ typedef struct {
     uint8_t read_queue_chr[BLE_GATT_MAX_READS];
     uint8_t read_queue_len;
     uint8_t read_pos;
-    uint8_t sub_queue_svc[BLE_GATT_MAX_READS];
-    uint8_t sub_queue_chr[BLE_GATT_MAX_READS];
-    uint8_t sub_queue_len;
-    uint8_t sub_pos;
     SemaphoreHandle_t done_semaphore;
-    TimerHandle_t listen_timer;
     ble_gatt_phase_t phase;
     ble_gatt_fail_stage_t fail_stage;
     int fail_status;
@@ -582,6 +573,47 @@ static const char *ble_gatt_fail_stage_to_string(ble_gatt_fail_stage_t stage)
     }
 }
 
+static const char *ble_gatt_status_to_name(int status)
+{
+    /* ATT errors are often encoded as 0x100 + ATT code by NimBLE host APIs. */
+    int att_status = status;
+    if ((status & 0xFF00) == 0x0100) {
+        att_status = status & 0x00FF;
+    }
+
+    switch (att_status) {
+    case 0x02:
+        return "read_not_permitted";
+    case 0x05:
+        return "auth_required";
+    case 0x08:
+        return "authorization_required";
+    case 0x0A:
+        return "attr_not_found";
+    case 0x0C:
+        return "encryption_key_size";
+    case 0x0D:
+        return "invalid_attr_value_len";
+    case 0x0E:
+        return "unlikely_error";
+    case 0x0F:
+        return "encryption_required";
+    default:
+        break;
+    }
+
+    switch (status) {
+    case BLE_HS_ENOTCONN:
+        return "not_connected";
+    case BLE_HS_ETIMEOUT:
+        return "timeout";
+    case BLE_HS_EBUSY:
+        return "busy";
+    default:
+        return "unknown";
+    }
+}
+
 static void ble_gatt_terminate(ble_gatt_session_t *session)
 {
     ble_gap_terminate(session->conn_handle, BLE_ERR_REM_USER_CONN_TERM);
@@ -595,24 +627,6 @@ static int ble_gatt_read_cb(
     const struct ble_gatt_error *error,
     struct ble_gatt_attr *attr,
     void *arg);
-static int ble_gatt_subscribe_cb(
-    uint16_t conn_handle,
-    const struct ble_gatt_error *error,
-    struct ble_gatt_attr *attr,
-    void *arg);
-
-static void ble_gatt_listen_timer_cb(TimerHandle_t timer)
-{
-    ble_gatt_session_t *session = (ble_gatt_session_t *)pvTimerGetTimerID(timer);
-
-    if (session == NULL) {
-        return;
-    }
-
-    if (session->conn_handle != BLE_HS_CONN_HANDLE_NONE) {
-        ble_gap_terminate(session->conn_handle, BLE_ERR_REM_USER_CONN_TERM);
-    }
-}
 
 /* ---- read queue ---- */
 
@@ -635,84 +649,11 @@ static void ble_gatt_build_read_queue(ble_gatt_session_t *session)
     }
 }
 
-static void ble_gatt_build_subscribe_queue(ble_gatt_session_t *session)
-{
-    session->sub_queue_len = 0;
-    session->sub_pos = 0;
-
-    for (uint8_t si = 0; si < session->svc_count; si++) {
-        const ble_gatt_svc_t *svc = &session->svcs[si];
-        for (uint8_t ci = 0; ci < svc->chr_count; ci++) {
-            const ble_gatt_chr_t *chr = &svc->chrs[ci];
-            if (((chr->properties & BLE_GATT_CHR_PROP_NOTIFY) != 0 ||
-                 (chr->properties & BLE_GATT_CHR_PROP_INDICATE) != 0) &&
-                chr->val_handle != 0 &&
-                session->sub_queue_len < BLE_GATT_MAX_READS) {
-                session->sub_queue_svc[session->sub_queue_len] = si;
-                session->sub_queue_chr[session->sub_queue_len] = ci;
-                session->sub_queue_len++;
-            }
-        }
-    }
-}
-
-static void ble_gatt_start_listen_or_finish(ble_gatt_session_t *session)
-{
-    if (session->sub_queue_len == 0 || session->listen_timer == NULL) {
-        session->phase = BLE_GATT_PHASE_DONE;
-        ble_gatt_terminate(session);
-        return;
-    }
-
-    session->phase = BLE_GATT_PHASE_LISTENING;
-    if (xTimerStart(session->listen_timer, 0) != pdPASS) {
-        session->phase = BLE_GATT_PHASE_DONE;
-        ble_gatt_terminate(session);
-    }
-}
-
-static void ble_gatt_start_next_subscribe(ble_gatt_session_t *session)
-{
-    if (session->sub_pos >= session->sub_queue_len) {
-        ble_gatt_start_listen_or_finish(session);
-        return;
-    }
-
-    const uint8_t si = session->sub_queue_svc[session->sub_pos];
-    const uint8_t ci = session->sub_queue_chr[session->sub_pos];
-    const ble_gatt_chr_t *chr = &session->svcs[si].chrs[ci];
-    const uint16_t cccd_handle = (uint16_t)(chr->val_handle + 1U);
-    uint8_t cccd_value[2] = {0x01, 0x00};
-
-    if ((chr->properties & BLE_GATT_CHR_PROP_NOTIFY) == 0 &&
-        (chr->properties & BLE_GATT_CHR_PROP_INDICATE) != 0) {
-        cccd_value[0] = 0x02;
-    }
-
-    int rc = ble_gattc_write_flat(
-        session->conn_handle,
-        cccd_handle,
-        cccd_value,
-        sizeof(cccd_value),
-        ble_gatt_subscribe_cb,
-        session);
-    if (rc != 0) {
-        session->sub_pos++;
-        ble_gatt_start_next_subscribe(session);
-    }
-}
-
 static void ble_gatt_start_next_read(ble_gatt_session_t *session)
 {
     if (session->read_pos >= session->read_queue_len) {
-        ble_gatt_build_subscribe_queue(session);
-        if (session->sub_queue_len > 0) {
-            session->phase = BLE_GATT_PHASE_SUBSCRIBING;
-            ble_gatt_start_next_subscribe(session);
-        } else {
-            session->phase = BLE_GATT_PHASE_DONE;
-            ble_gatt_terminate(session);
-        }
+        session->phase = BLE_GATT_PHASE_DONE;
+        ble_gatt_terminate(session);
         return;
     }
 
@@ -725,7 +666,12 @@ static void ble_gatt_start_next_read(ble_gatt_session_t *session)
     if (rc != 0) {
         chr->has_value = true;
         chr->raw_hex[0] = '\0';
-        snprintf(chr->value, sizeof(chr->value), "read_err %d", rc);
+        snprintf(
+            chr->value,
+            sizeof(chr->value),
+            "read_err %d %s",
+            rc,
+            ble_gatt_status_to_name(rc));
         /* Skip this chr on error */
         session->read_pos++;
         ble_gatt_start_next_read(session);
@@ -758,33 +704,17 @@ static int ble_gatt_read_cb(
         ble_gatt_chr_t *chr = &session->svcs[si].chrs[ci];
         chr->has_value = true;
         chr->raw_hex[0] = '\0';
-        snprintf(chr->value, sizeof(chr->value), "read_err %d", error->status);
+        snprintf(
+            chr->value,
+            sizeof(chr->value),
+            "read_err %d %s",
+            error->status,
+            ble_gatt_status_to_name(error->status));
     }
 
     session->read_pos++;
     ble_gatt_start_next_read(session);
 
-    return 0;
-}
-
-static int ble_gatt_subscribe_cb(
-    uint16_t conn_handle,
-    const struct ble_gatt_error *error,
-    struct ble_gatt_attr *attr,
-    void *arg)
-{
-    ble_gatt_session_t *session = (ble_gatt_session_t *)arg;
-
-    (void)conn_handle;
-    (void)error;
-    (void)attr;
-
-    if (session == NULL) {
-        return 0;
-    }
-
-    session->sub_pos++;
-    ble_gatt_start_next_subscribe(session);
     return 0;
 }
 
@@ -972,9 +902,6 @@ static int ble_gatt_gap_event(struct ble_gap_event *event, void *arg)
         return 0;
 
     case BLE_GAP_EVENT_DISCONNECT:
-        if (session->listen_timer != NULL) {
-            (void)xTimerStop(session->listen_timer, 0);
-        }
         (void)status_led_set_ble_state(STATUS_LED_BLE_STATE_IDLE);
         if (session->phase == BLE_GATT_PHASE_DONE ||
             session->phase == BLE_GATT_PHASE_FAILED) {
@@ -1049,20 +976,10 @@ esp_err_t ble_gatt_inspect(
         return ESP_ERR_NO_MEM;
     }
 
-    session->listen_timer = xTimerCreate(
-        "gatt_listen",
-        pdMS_TO_TICKS(BLE_GATT_LISTEN_WINDOW_MS),
-        pdFALSE,
-        session,
-        ble_gatt_listen_timer_cb);
-
     uint8_t own_addr_type;
     int rc = ble_hs_id_infer_auto(0, &own_addr_type);
     if (rc != 0) {
         vSemaphoreDelete(session->done_semaphore);
-        if (session->listen_timer != NULL) {
-            xTimerDelete(session->listen_timer, 0);
-        }
         ble_manager_release();
         return ESP_FAIL;
     }
@@ -1081,9 +998,6 @@ esp_err_t ble_gatt_inspect(
         session);
     if (rc != 0) {
         vSemaphoreDelete(session->done_semaphore);
-        if (session->listen_timer != NULL) {
-            xTimerDelete(session->listen_timer, 0);
-        }
         ble_manager_release();
         snprintf(line, sizeof(line), "BLE_GATT_CONNECT_FAILED status=%d\n", rc);
         write_line(line, context);
@@ -1105,18 +1019,12 @@ esp_err_t ble_gatt_inspect(
         }
         (void)xSemaphoreTake(session->done_semaphore, pdMS_TO_TICKS(1000));
         vSemaphoreDelete(session->done_semaphore);
-        if (session->listen_timer != NULL) {
-            xTimerDelete(session->listen_timer, 0);
-        }
         ble_manager_release();
         write_line("BLE_GATT_CONNECT_FAILED stage=timeout\n", context);
         return ESP_ERR_TIMEOUT;
     }
 
     vSemaphoreDelete(session->done_semaphore);
-    if (session->listen_timer != NULL) {
-        xTimerDelete(session->listen_timer, 0);
-    }
 
     if (session->phase == BLE_GATT_PHASE_FAILED) {
         ble_manager_release();
