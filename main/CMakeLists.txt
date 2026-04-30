@@ -20,6 +20,8 @@ idf_component_register(
         "modules/wifi/wifi_manager.c"
         "modules/sd/sd_card_manager.c"
         "modules/sd/sd_command.c"
+        "modules/settings/settings_manager.c"
+        "modules/settings/settings_command.c"
         "modules/send/send_command.c"
         "modules/query/query_command.c"
     INCLUDE_DIRS "."

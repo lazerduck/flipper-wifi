@@ -16,6 +16,7 @@
 #include "freertos/task.h"
 #include "modules/status_led/status_led.h"
 #include "modules/wifi/wifi_manager.h"
+#include "modules/settings/settings_manager.h"
 
 #define COMMAND_UART_NUM ((uart_port_t)CONFIG_FLIPPER_COMMAND_UART_PORT)
 #define COMMAND_UART_BAUD_RATE CONFIG_FLIPPER_COMMAND_UART_BAUD_RATE
@@ -144,6 +145,8 @@ void app_main(void)
 	if (led_err == ESP_OK) {
 		wifi_manager_set_status_callback(app_status_led_wifi_state_changed, NULL);
 	}
+
+	settings_manager_init();
 
 	ESP_ERROR_CHECK(command_uart_init());
 	s_command_uart_tx_mutex = xSemaphoreCreateMutex();

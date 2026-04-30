@@ -6,6 +6,7 @@ enum FuseRadioMainMenuIndex {
     FuseRadioMainMenuIndexLed,
     FuseRadioMainMenuIndexZigbee,
     FuseRadioMainMenuIndexStorage,
+    FuseRadioMainMenuIndexSettings,
 };
 
 static void fuse_radio_scene_main_menu_callback(void* context, uint32_t index) {
@@ -33,6 +34,12 @@ void fuse_radio_scene_main_menu_on_enter(void* context) {
         app->submenu,
         "Storage",
         FuseRadioMainMenuIndexStorage,
+        fuse_radio_scene_main_menu_callback,
+        app);
+    submenu_add_item(
+        app->submenu,
+        "Settings",
+        FuseRadioMainMenuIndexSettings,
         fuse_radio_scene_main_menu_callback,
         app);
 
@@ -63,6 +70,8 @@ bool fuse_radio_scene_main_menu_on_event(void* context, SceneManagerEvent event)
             scene_manager_next_scene(app->scene_manager, FuseRadioScenePlaceholder);
         } else if(event.event == FuseRadioMainMenuIndexStorage) {
             scene_manager_next_scene(app->scene_manager, FuseRadioSceneSdMenu);
+        } else if(event.event == FuseRadioMainMenuIndexSettings) {
+            scene_manager_next_scene(app->scene_manager, FuseRadioSceneSettings);
         }
 
         return true;

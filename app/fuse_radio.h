@@ -267,3 +267,5 @@ typedef struct {
 FuseRadioApp* fuse_radio_app_alloc(void);
 void fuse_radio_app_free(FuseRadioApp* app);
 void fuse_radio_app_run(FuseRadioApp* app);
+bool fuse_radio_app_start_config_get(FuseRadioApp* app);
+bool fuse_radio_app_start_config_set(FuseRadioApp* app, const char* key, bool value);

@@ -1669,6 +1669,28 @@ static bool fuse_radio_app_send_sd_format_command(FuseRadioApp* app) {
     return fuse_radio_app_send_line(app, "SD FORMAT\n");
 }
 
+bool fuse_radio_app_start_config_get(FuseRadioApp* app) {
+    if(app->module_state != FuseRadioModuleStateDetected) {
+        fuse_radio_app_set_error(app, "Board is not ready.");
+        return false;
+    }
+    app->current_request    = FuseRadioRequestConfigGet;
+    app->config_entry_count = 0U;
+    app->config_dirty       = false;
+    app->config_sd_available = true; /* assume yes until told otherwise */
+    return fuse_radio_app_send_line(app, "CONFIG GET\n");
+}
+
+bool fuse_radio_app_start_config_set(FuseRadioApp* app, const char* key, bool value) {
+    if(app->module_state != FuseRadioModuleStateDetected) {
+        return false;
+    }
+    char command[80];
+    snprintf(command, sizeof(command), "CONFIG SET key=%s value=%u\n", key, (unsigned)value);
+    app->current_request = FuseRadioRequestConfigSet;
+    return fuse_radio_app_send_line(app, command);
+}
+
 bool fuse_radio_app_start_wifi_beacon(FuseRadioApp* app, uint8_t channel, uint32_t duration_ms) {
     if(app->module_state != FuseRadioModuleStateDetected) {
         fuse_radio_app_set_error(app, "Board is not ready.");
@@ -2098,6 +2120,78 @@ static void fuse_radio_app_format_bytes(char* out, size_t out_size, uint64_t byt
     } else {
         snprintf(out, out_size, "%llu.%u %s", (unsigned long long)whole, (unsigned)tenth, units[unit]);
     }
+}
+
+/* ---------------------------------------------------------------------------
+ * CONFIG line parsing helpers
+ * --------------------------------------------------------------------------- */
+
+/* Copy an unquoted or quoted value for a named token, e.g. key=foo or label="Foo Bar" */
+static bool fuse_radio_app_config_extract(
+    const char* line,
+    const char* key_eq,  /* e.g. "key=" */
+    char*       out,
+    size_t      out_size) {
+    const char* pos = strstr(line, key_eq);
+    if(pos == NULL) {
+        return false;
+    }
+    pos += strlen(key_eq);
+
+    size_t i = 0U;
+    if(*pos == '"') {
+        pos++;
+        while(*pos != '\0' && *pos != '"' && i + 1U < out_size) {
+            out[i++] = *pos++;
+        }
+    } else {
+        while(*pos != '\0' && *pos != ' ' && i + 1U < out_size) {
+            out[i++] = *pos++;
+        }
+    }
+    out[i] = '\0';
+    return i > 0U;
+}
+
+static void fuse_radio_app_parse_config_entry(FuseRadioApp* app, const char* line) {
+    if(app->config_entry_count >= FUSE_RADIO_MAX_CONFIG_ENTRIES) {
+        return;
+    }
+
+    char key[FUSE_RADIO_CONFIG_KEY_SIZE];
+    char label[FUSE_RADIO_CONFIG_LABEL_SIZE];
+    char type_str[8];
+    char value_str[8];
+
+    if(!fuse_radio_app_config_extract(line, "key=", key, sizeof(key))) {
+        return;
+    }
+    if(!fuse_radio_app_config_extract(line, "type=", type_str, sizeof(type_str))) {
+        return;
+    }
+    if(!fuse_radio_app_config_extract(line, "value=", value_str, sizeof(value_str))) {
+        return;
+    }
+    if(!fuse_radio_app_config_extract(line, "label=", label, sizeof(label))) {
+        fuse_radio_app_strlcpy(label, key, sizeof(label));
+    }
+
+    uint8_t idx = app->config_entry_count;
+
+    fuse_radio_app_strlcpy(
+        app->config_entries[idx].key, key, sizeof(app->config_entries[idx].key));
+    fuse_radio_app_strlcpy(
+        app->config_entries[idx].label, label, sizeof(app->config_entries[idx].label));
+
+    if(strcmp(type_str, "bool") == 0) {
+        app->config_entries[idx].type       = 0U;
+        app->config_entries[idx].bool_value = (value_str[0] == '1');
+    } else {
+        app->config_entries[idx].type      = 1U;
+        app->config_entries[idx].int_value = (int32_t)strtol(value_str, NULL, 10);
+    }
+
+    app->config_entry_count++;
 }
 
 static void fuse_radio_app_parse_sd_info(FuseRadioApp* app, const char* line) {
@@ -2820,6 +2914,22 @@ static void fuse_radio_app_handle_error_line(FuseRadioApp* app, const char* line
        app->current_request == FuseRadioRequestLedAuto) {
         fuse_radio_app_set_status(app, line);
         app->current_request = FuseRadioRequestNone;
+        return;
+    }
+
+    if(app->current_request == FuseRadioRequestConfigGet ||
+       app->current_request == FuseRadioRequestConfigSet) {
+        app->current_request = FuseRadioRequestNone;
+        if(strcmp(line, "ERR CONFIG_NO_SD") == 0) {
+            app->config_sd_available = false;
+            view_dispatcher_send_custom_event(
+                app->view_dispatcher, FuseRadioCustomEventConfigNoSd);
+        } else {
+            fuse_radio_app_strlcpy(
+                app->config_info_text, line, sizeof(app->config_info_text));
+            view_dispatcher_send_custom_event(
+                app->view_dispatcher, FuseRadioCustomEventConfigFailed);
+        }
         return;
     }
 
@@ -3557,6 +3667,29 @@ static void fuse_radio_app_handle_line(FuseRadioApp* app, const char* line) {
     } else if(strncmp(line, "SD FORMAT_DONE ", 15) == 0) {
         app->sd_confirm_format = false;
         fuse_radio_app_start_sd_action(app, FuseRadioSdActionDetail);
+    } else if(strncmp(line, "CONFIG_START ", 13) == 0) {
+        app->config_entry_count  = 0U;
+        app->config_sd_available = true;
+        app->config_dirty        = false;
+    } else if(strcmp(line, "CONFIG_SD YES") == 0) {
+        app->config_sd_available = true;
+    } else if(strcmp(line, "CONFIG_SD NO") == 0) {
+        app->config_sd_available = false;
+    } else if(strncmp(line, "CONFIG_ENTRY ", 13) == 0) {
+        fuse_radio_app_parse_config_entry(app, line);
+    } else if(strcmp(line, "CONFIG_DONE") == 0) {
+        app->current_request = FuseRadioRequestNone;
+        app->config_dirty    = true;
+        view_dispatcher_send_custom_event(
+            app->view_dispatcher, FuseRadioCustomEventConfigLoaded);
+    } else if(strncmp(line, "CONFIG_SET_OK ", 14) == 0) {
+        app->current_request = FuseRadioRequestNone;
+        view_dispatcher_send_custom_event(
+            app->view_dispatcher, FuseRadioCustomEventConfigSetDone);
+    } else if(strcmp(line, "CONFIG_RESET_OK") == 0) {
+        app->current_request = FuseRadioRequestNone;
+        view_dispatcher_send_custom_event(
+            app->view_dispatcher, FuseRadioCustomEventConfigSetDone);
     } else if(strncmp(line, "ERR ", 4) == 0) {
         fuse_radio_app_handle_error_line(app, line);
     }
@@ -4503,6 +4636,7 @@ FuseRadioApp* fuse_radio_app_alloc(void) {
     app->survey_result_view = fuse_radio_survey_result_view_alloc();
     app->watch_live_view = fuse_radio_watch_live_view_alloc();
     app->watch_result_view = fuse_radio_watch_result_view_alloc();
+    app->variable_item_list = variable_item_list_alloc();
     app->rx_stream = furi_stream_buffer_alloc(FUSE_RADIO_RX_STREAM_SIZE, 1U);
     app->power = furi_record_open(RECORD_POWER);
     app->storage = furi_record_open(RECORD_STORAGE);
@@ -4578,6 +4712,10 @@ FuseRadioApp* fuse_radio_app_alloc(void) {
         app->view_dispatcher,
         FuseRadioViewWatchResult,
         fuse_radio_watch_result_view_get_view(app->watch_result_view));
+    view_dispatcher_add_view(
+        app->view_dispatcher,
+        FuseRadioViewVariableItemList,
+        variable_item_list_get_view(app->variable_item_list));
 
     fuse_radio_scan_view_set_callback(app->scan_view, fuse_radio_app_scan_view_callback, app);
     fuse_radio_ble_scan_view_set_callback(
@@ -4653,6 +4791,9 @@ void fuse_radio_app_free(FuseRadioApp* app) {
 
     view_dispatcher_remove_view(app->view_dispatcher, FuseRadioViewWatchResult);
     fuse_radio_watch_result_view_free(app->watch_result_view);
+
+    view_dispatcher_remove_view(app->view_dispatcher, FuseRadioViewVariableItemList);
+    variable_item_list_free(app->variable_item_list);
 
     view_dispatcher_remove_view(app->view_dispatcher, FuseRadioViewSubmenu);
     submenu_free(app->submenu);

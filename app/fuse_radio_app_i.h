@@ -18,6 +18,7 @@
 #include <gui/gui.h>
 #include <gui/modules/submenu.h>
 #include <gui/modules/text_input.h>
+#include <gui/modules/variable_item_list.h>
 #include <gui/modules/widget.h>
 #include <gui/view_dispatcher.h>
 
@@ -47,6 +48,10 @@
 #define FUSE_RADIO_SD_INFO_SIZE        768U
 #define FUSE_RADIO_SD_PATH_SIZE        128U
 #define FUSE_RADIO_MAX_SD_ENTRIES      24U
+#define FUSE_RADIO_MAX_CONFIG_ENTRIES  16U
+#define FUSE_RADIO_CONFIG_KEY_SIZE      32U
+#define FUSE_RADIO_CONFIG_LABEL_SIZE    48U
+#define FUSE_RADIO_CONFIG_INFO_SIZE     512U
 #define FUSE_RADIO_DETECT_TIMEOUT_MS  5000U
 #define FUSE_RADIO_PING_INTERVAL_MS   750U
 #define FUSE_RADIO_MODE_GUARD_POLL_MS 1000U
@@ -71,6 +76,7 @@ typedef enum {
     FuseRadioViewSurveyResult,
     FuseRadioViewWatchLive,
     FuseRadioViewWatchResult,
+    FuseRadioViewVariableItemList,
 } FuseRadioView;
 
 typedef enum {
@@ -102,6 +108,8 @@ typedef enum {
     FuseRadioRequestLedStatus,
     FuseRadioRequestLedSet,
     FuseRadioRequestLedAuto,
+    FuseRadioRequestConfigGet,
+    FuseRadioRequestConfigSet,
 } FuseRadioRequest;
 
 typedef enum {
@@ -158,6 +166,10 @@ typedef enum {
     FuseRadioCustomEventSdRefresh,
     FuseRadioCustomEventSdFormatConfirm,
     FuseRadioCustomEventLedValueSet,
+    FuseRadioCustomEventConfigLoaded,
+    FuseRadioCustomEventConfigSetDone,
+    FuseRadioCustomEventConfigFailed,
+    FuseRadioCustomEventConfigNoSd,
 } FuseRadioCustomEvent;
 
 typedef enum {
@@ -295,6 +307,20 @@ struct FuseRadioApp {
     bool beacon_active;
     bool beacon_stop_pending;
     bool led_manual_override;
+
+    /* ---- Settings / config ---- */
+    VariableItemList* variable_item_list;
+    uint8_t           config_entry_count;
+    bool              config_sd_available;
+    bool              config_dirty;
+    char              config_info_text[FUSE_RADIO_CONFIG_INFO_SIZE];
+    struct {
+        char    key[FUSE_RADIO_CONFIG_KEY_SIZE];
+        char    label[FUSE_RADIO_CONFIG_LABEL_SIZE];
+        uint8_t type;   /* 0 = bool, 1 = int */
+        bool    bool_value;
+        int32_t int_value;
+    } config_entries[FUSE_RADIO_MAX_CONFIG_ENTRIES];
 
     FuseRadioSavedCredential saved_credentials[FUSE_RADIO_MAX_SAVED_NETWORKS];
     FuseRadioSavedBleResults saved_ble_results;
