@@ -11,7 +11,7 @@
 #define WIFI_BEACON_MAX_SSID_LENGTH     32U
 #define WIFI_BEACON_MAX_DURATION_MS     600000U
 #define WIFI_BEACON_INTERVAL_MS         102U  /* 100 TU, standard beacon period */
-#define WIFI_BEACON_TX_POWER_MAX        8     /* ~8 dBm — roughly half of full power */
+#define WIFI_BEACON_TX_POWER_MAX        8     /* 2 dBm — minimum TX power (unit: 0.25 dBm) */
 
 #define WIFI_BEACON_ERR_BASE            0x7300
 #define WIFI_BEACON_ERR_BUSY            (WIFI_BEACON_ERR_BASE + 1)
