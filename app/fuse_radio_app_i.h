@@ -12,6 +12,8 @@
 #include "fuse_radio_value_picker_view.h"
 #include "fuse_radio_watch_result_view.h"
 #include "fuse_radio_watch_live_view.h"
+#include "fuse_radio_ble_distance_view.h"
+#include "fuse_radio_gatt_browser_view.h"
 #include "scenes/fuse_radio_scene.h"
 
 #include <furi.h>
@@ -76,6 +78,8 @@ typedef enum {
     FuseRadioViewSurveyResult,
     FuseRadioViewWatchLive,
     FuseRadioViewWatchResult,
+    FuseRadioViewBleDistance,
+    FuseRadioViewGattBrowser,
     FuseRadioViewVariableItemList,
 } FuseRadioView;
 
@@ -234,6 +238,8 @@ struct FuseRadioApp {
     FuseRadioSurveyResultView* survey_result_view;
     FuseRadioWatchLiveView* watch_live_view;
     FuseRadioWatchResultView* watch_result_view;
+    FuseRadioBleDistanceView* ble_distance_view;
+    FuseRadioGattBrowserView* gatt_browser_view;
 
     Expansion* expansion;
     Power* power;
@@ -365,6 +371,9 @@ struct FuseRadioApp {
     bool sd_confirm_format;
     char ble_distance_trend[10];
     char ble_distance_error[FUSE_RADIO_SCAN_ERROR_SIZE];
+    int8_t  ble_distance_history[FUSE_RADIO_BLE_DISTANCE_VIEW_HISTORY];
+    uint8_t ble_distance_history_head;
+    uint8_t ble_distance_history_count;
     FuseRadioSdAction sd_action;
     FuseRadioSdEntry sd_entries[FUSE_RADIO_MAX_SD_ENTRIES];
 };
@@ -414,6 +423,7 @@ void fuse_radio_app_refresh_ble_distance_widget(FuseRadioApp* app);
 void fuse_radio_app_refresh_ble_info_widget(FuseRadioApp* app);
 void fuse_radio_app_refresh_gatt_services_submenu(FuseRadioApp* app);
 void fuse_radio_app_refresh_gatt_chrs_widget(FuseRadioApp* app);
+void fuse_radio_app_refresh_gatt_browser_view(FuseRadioApp* app);
 void fuse_radio_app_refresh_wifi_info_widget(FuseRadioApp* app);
 void fuse_radio_app_refresh_http_widget(FuseRadioApp* app);
 void fuse_radio_app_refresh_mdns_widget(FuseRadioApp* app);

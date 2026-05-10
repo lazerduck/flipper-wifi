@@ -80,6 +80,9 @@ static void fuse_radio_app_reset_ble_distance_state(FuseRadioApp* app) {
     app->ble_distance_has_error = false;
     fuse_radio_app_strlcpy(app->ble_distance_trend, "steady", sizeof(app->ble_distance_trend));
     app->ble_distance_error[0] = '\0';
+    memset(app->ble_distance_history, 0, sizeof(app->ble_distance_history));
+    app->ble_distance_history_head  = 0U;
+    app->ble_distance_history_count = 0U;
 }
 
 static bool fuse_radio_app_save_credentials(FuseRadioApp* app) {
@@ -583,20 +586,16 @@ static void fuse_radio_app_watch_live_view_callback(void* context) {
     view_dispatcher_send_custom_event(app->view_dispatcher, FuseRadioCustomEventWifiPromiscuousStop);
 }
 
-static void fuse_radio_app_ble_distance_button_callback(
-    GuiButtonType button,
-    InputType type,
+static void fuse_radio_app_ble_distance_view_callback(
+    FuseRadioBleDistanceViewAction action,
     void* context) {
     FuseRadioApp* app = context;
-
-    if(type != InputTypeShort) {
-        return;
-    }
-
-    if(button == GuiButtonTypeCenter) {
-        view_dispatcher_send_custom_event(app->view_dispatcher, FuseRadioCustomEventBleDistanceStop);
-    } else if(button == GuiButtonTypeLeft) {
-        view_dispatcher_send_custom_event(app->view_dispatcher, FuseRadioCustomEventBleDistanceBack);
+    if(action == FuseRadioBleDistanceViewActionStop) {
+        view_dispatcher_send_custom_event(
+            app->view_dispatcher, FuseRadioCustomEventBleDistanceStop);
+    } else {
+        view_dispatcher_send_custom_event(
+            app->view_dispatcher, FuseRadioCustomEventBleDistanceBack);
     }
 }
 
@@ -913,94 +912,30 @@ void fuse_radio_app_refresh_saved_ble_view(FuseRadioApp* app) {
 void fuse_radio_app_refresh_ble_distance_widget(FuseRadioApp* app) {
     furi_assert(app);
 
-    char title[24];
-    char detail[256];
-    char trend[16];
-    char rssi_text[16];
-    char distance_text[20];
-    char signal[8];
-    uint8_t bars = 0U;
-
-    if(app->ble_distance_rssi >= -55) {
-        bars = 4U;
-    } else if(app->ble_distance_rssi >= -67) {
-        bars = 3U;
-    } else if(app->ble_distance_rssi >= -78) {
-        bars = 2U;
-    } else if(app->ble_distance_rssi >= -90) {
-        bars = 1U;
-    }
-
-    for(uint8_t index = 0U; index < 4U; index++) {
-        signal[index] = index < bars ? '#' : '-';
-    }
-    signal[4] = '\0';
-
-    if(app->ble_distance_seen) {
-        snprintf(rssi_text, sizeof(rssi_text), "%d dBm", app->ble_distance_rssi);
-        if(app->ble_distance_distance_dm >= 0) {
-            snprintf(
-                distance_text,
-                sizeof(distance_text),
-                "%lu.%lum",
-                (unsigned long)(app->ble_distance_distance_dm / 10),
-                (unsigned long)(app->ble_distance_distance_dm % 10));
-        } else {
-            snprintf(distance_text, sizeof(distance_text), "--");
-        }
-    } else {
-        snprintf(rssi_text, sizeof(rssi_text), "not seen");
-        snprintf(distance_text, sizeof(distance_text), "--");
-    }
-
-    widget_reset(app->widget);
+    FuseRadioBleDistanceSnapshot snapshot;
+    memset(&snapshot, 0, sizeof(snapshot));
 
     snprintf(
-        title,
-        sizeof(title),
+        snapshot.header,
+        sizeof(snapshot.header),
         app->ble_selection.device.has_name ? "Dist %s" : "BLE Distance",
         app->ble_selection.device.has_name ? app->ble_selection.device.name : "");
-    widget_add_string_element(app->widget, 64, 5, AlignCenter, AlignTop, FontPrimary, title);
 
-    fuse_radio_app_strlcpy(trend, app->ble_distance_trend, sizeof(trend));
-    for(size_t index = 0U; trend[index] != '\0'; index++) {
-        trend[index] = (char)tolower((uint8_t)trend[index]);
-    }
+    snapshot.rssi         = app->ble_distance_rssi;
+    snapshot.seen         = app->ble_distance_seen;
+    snapshot.active       = app->ble_distance_active;
+    snapshot.stop_pending = app->ble_distance_stop_pending;
+    snapshot.samples      = app->ble_distance_samples;
+    fuse_radio_app_strlcpy(snapshot.trend, app->ble_distance_trend, sizeof(snapshot.trend));
 
-    if(app->ble_distance_has_error && app->ble_distance_error[0]) {
-        snprintf(
-            detail,
-            sizeof(detail),
-            "MAC %s\nError\n%s\n\nCenter: restart",
-            app->ble_selection.device.mac,
-            app->ble_distance_error);
-    } else {
-        snprintf(
-            detail,
-            sizeof(detail),
-            "MAC %s\nRSSI %s  [%s]\nTrend %s\nRough %s\nSamples %u  Miss %u",
-            app->ble_selection.device.mac,
-            rssi_text,
-            signal,
-            trend,
-            distance_text,
-            (unsigned)app->ble_distance_samples,
-            (unsigned)app->ble_distance_missed_scans);
-    }
+    memcpy(
+        snapshot.history,
+        app->ble_distance_history,
+        sizeof(app->ble_distance_history));
+    snapshot.history_head  = app->ble_distance_history_head;
+    snapshot.history_count = app->ble_distance_history_count;
 
-    widget_add_text_scroll_element(app->widget, 0, 14, 128, 38, detail);
-    widget_add_button_element(
-        app->widget,
-        GuiButtonTypeLeft,
-        "Back",
-        fuse_radio_app_ble_distance_button_callback,
-        app);
-    widget_add_button_element(
-        app->widget,
-        GuiButtonTypeCenter,
-        app->ble_distance_active ? (app->ble_distance_stop_pending ? "Wait" : "Stop") : "Start",
-        fuse_radio_app_ble_distance_button_callback,
-        app);
+    fuse_radio_ble_distance_view_set_snapshot(app->ble_distance_view, &snapshot);
 
     app->ble_dirty = false;
 }
@@ -1121,6 +1056,16 @@ void fuse_radio_app_refresh_gatt_chrs_widget(FuseRadioApp* app) {
     }
 
     widget_add_text_scroll_element(app->widget, 0, 15, 128, 38, chrs_text);
+    app->gatt_dirty = false;
+}
+
+void fuse_radio_app_refresh_gatt_browser_view(FuseRadioApp* app) {
+    furi_assert(app);
+
+    fuse_radio_gatt_browser_view_set_data(
+        app->gatt_browser_view,
+        &app->gatt_results,
+        app->ble_gatt_selected_svc);
     app->gatt_dirty = false;
 }
 
@@ -2661,6 +2606,16 @@ static bool fuse_radio_app_parse_ble_distance_sample_line(FuseRadioApp* app, con
         app->ble_distance_missed_scans++;
     }
 
+    /* Push RSSI sample into the circular history buffer */
+    app->ble_distance_history[app->ble_distance_history_head] =
+        (int8_t)app->ble_distance_rssi;
+    app->ble_distance_history_head =
+        (uint8_t)((app->ble_distance_history_head + 1U) %
+                  FUSE_RADIO_BLE_DISTANCE_VIEW_HISTORY);
+    if(app->ble_distance_history_count < FUSE_RADIO_BLE_DISTANCE_VIEW_HISTORY) {
+        app->ble_distance_history_count++;
+    }
+
     app->ble_distance_has_error = false;
     app->ble_dirty = true;
     return true;
@@ -3935,8 +3890,14 @@ bool fuse_radio_app_start_ble_distance(FuseRadioApp* app) {
 bool fuse_radio_app_stop_ble_distance(FuseRadioApp* app) {
     furi_assert(app);
 
-    if(!app->ble_distance_active || app->ble_distance_stop_pending) {
+    if(!app->ble_distance_active) {
         return false;
+    }
+
+    if(app->ble_distance_stop_pending) {
+        /* Stop is already pending; retry command in case a prior UART line
+         * was dropped while the module was busy. */
+        return fuse_radio_app_send_ble_distance_stop(app);
     }
 
     app->ble_distance_stop_pending = true;
@@ -4550,7 +4511,7 @@ void fuse_radio_app_handle_tick(FuseRadioApp* app) {
     }
     if(app->ble_dirty && scene == FuseRadioSceneBleDistance) {
         fuse_radio_app_refresh_ble_distance_widget(app);
-        view_dispatcher_switch_to_view(app->view_dispatcher, FuseRadioViewWidget);
+        view_dispatcher_switch_to_view(app->view_dispatcher, FuseRadioViewBleDistance);
     }
     if(app->scan_dirty &&
        (scene == FuseRadioSceneWifiScan || scene == FuseRadioSceneWifiConnectSsid)) {
@@ -4636,6 +4597,8 @@ FuseRadioApp* fuse_radio_app_alloc(void) {
     app->survey_result_view = fuse_radio_survey_result_view_alloc();
     app->watch_live_view = fuse_radio_watch_live_view_alloc();
     app->watch_result_view = fuse_radio_watch_result_view_alloc();
+    app->ble_distance_view = fuse_radio_ble_distance_view_alloc();
+    app->gatt_browser_view = fuse_radio_gatt_browser_view_alloc();
     app->variable_item_list = variable_item_list_alloc();
     app->rx_stream = furi_stream_buffer_alloc(FUSE_RADIO_RX_STREAM_SIZE, 1U);
     app->power = furi_record_open(RECORD_POWER);
@@ -4714,6 +4677,14 @@ FuseRadioApp* fuse_radio_app_alloc(void) {
         fuse_radio_watch_result_view_get_view(app->watch_result_view));
     view_dispatcher_add_view(
         app->view_dispatcher,
+        FuseRadioViewBleDistance,
+        fuse_radio_ble_distance_view_get_view(app->ble_distance_view));
+    view_dispatcher_add_view(
+        app->view_dispatcher,
+        FuseRadioViewGattBrowser,
+        fuse_radio_gatt_browser_view_get_view(app->gatt_browser_view));
+    view_dispatcher_add_view(
+        app->view_dispatcher,
         FuseRadioViewVariableItemList,
         variable_item_list_get_view(app->variable_item_list));
 
@@ -4736,6 +4707,8 @@ FuseRadioApp* fuse_radio_app_alloc(void) {
         app->watch_live_view, fuse_radio_app_watch_live_view_callback, app);
     fuse_radio_watch_result_view_set_callback(
         app->watch_result_view, fuse_radio_app_watch_result_view_callback, app);
+    fuse_radio_ble_distance_view_set_callback(
+        app->ble_distance_view, fuse_radio_app_ble_distance_view_callback, app);
 
     fuse_radio_app_start_session(app);
     scene_manager_next_scene(app->scene_manager, FuseRadioSceneStatus);
@@ -4791,6 +4764,12 @@ void fuse_radio_app_free(FuseRadioApp* app) {
 
     view_dispatcher_remove_view(app->view_dispatcher, FuseRadioViewWatchResult);
     fuse_radio_watch_result_view_free(app->watch_result_view);
+
+    view_dispatcher_remove_view(app->view_dispatcher, FuseRadioViewBleDistance);
+    fuse_radio_ble_distance_view_free(app->ble_distance_view);
+
+    view_dispatcher_remove_view(app->view_dispatcher, FuseRadioViewGattBrowser);
+    fuse_radio_gatt_browser_view_free(app->gatt_browser_view);
 
     view_dispatcher_remove_view(app->view_dispatcher, FuseRadioViewVariableItemList);
     variable_item_list_free(app->variable_item_list);

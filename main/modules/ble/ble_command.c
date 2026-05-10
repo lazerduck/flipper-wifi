@@ -32,8 +32,6 @@
 #define BLE_DISTANCE_TX_POWER_KEY "tx_power="
 #define BLE_DISTANCE_DEFAULT_TX_POWER_DBM (-59)
 #define BLE_DISTANCE_TASK_STACK_SIZE 4096U
-#define BLE_DISTANCE_TASK_STOP_WAIT_MS 100U
-#define BLE_DISTANCE_TASK_STOP_MAX_POLLS 30U
 /* Minimum gap between consecutive RSSI samples sent to the Flipper (ms).
  * The interval_ms argument from the Flipper is clamped to this floor. */
 #define BLE_DISTANCE_MIN_SAMPLE_MS 250U
@@ -358,19 +356,13 @@ static esp_err_t ble_distance_stop(void)
 
     s_ble_distance_session.stop_requested = true;
 
-    /* Cancel the continuous scan immediately rather than waiting for the
-     * next advertisement to arrive — the DISC_COMPLETE event will fire
-     * and unblock ble_manager_scan_stream() in the distance task. */
+    /* Cancel the continuous scan immediately.  ble_manager_scan_stream() will
+     * unblock when DISC_COMPLETE fires, the task will send BLE_DISTANCE_DONE
+     * and clean up asynchronously.  We do not block here — blocking the command
+     * task prevents any further UART commands from being processed. */
     ble_gap_disc_cancel();
 
-    for (uint8_t index = 0U; index < BLE_DISTANCE_TASK_STOP_MAX_POLLS; index++) {
-        if (!s_ble_distance_session.active) {
-            return ESP_OK;
-        }
-        vTaskDelay(pdMS_TO_TICKS(BLE_DISTANCE_TASK_STOP_WAIT_MS));
-    }
-
-    return ESP_ERR_TIMEOUT;
+    return ESP_OK;
 }
 
 bool ble_command_try_handle(const char *command_line, const command_context_t *context)

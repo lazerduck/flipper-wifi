@@ -24,7 +24,7 @@ bool fuse_radio_scene_ble_gatt_progress_on_event(void* context, SceneManagerEven
 
     if(event.type == SceneManagerEventTypeCustom) {
         if(event.event == FuseRadioCustomEventBleGattDone) {
-            scene_manager_next_scene(app->scene_manager, FuseRadioSceneBleGattServices);
+            scene_manager_next_scene(app->scene_manager, FuseRadioSceneBleGattCharacteristics);
             return true;
         }
         if(event.event == FuseRadioCustomEventBleGattFailed) {

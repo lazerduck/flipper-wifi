@@ -1225,6 +1225,14 @@ esp_err_t ble_manager_scan_stream(ble_stream_cb_t on_adv, void *context,
     uint8_t own_addr_type = BLE_OWN_ADDR_PUBLIC;
     esp_err_t err;
     int rc;
+    bool done = false;
+
+    /* Keep scans short so stop requests cannot get stuck behind a missed
+     * cancellation callback. Each window naturally completes and we decide
+     * whether to continue based on the stop flag. */
+    const int32_t scan_window_ms = 1000;
+    const TickType_t scan_wait_ticks = pdMS_TO_TICKS((uint32_t)scan_window_ms + 300U);
+    const TickType_t cancel_wait_ticks = pdMS_TO_TICKS(400U);
 
     if (on_adv == NULL) {
         return ESP_ERR_INVALID_ARG;
@@ -1259,16 +1267,39 @@ esp_err_t ble_manager_scan_stream(ble_stream_cb_t on_adv, void *context,
     scan_params.passive = 1;
     scan_params.filter_duplicates = 0; /* see every advertisement */
 
-    /* BLE_HS_FOREVER (INT32_MAX) → scan until explicitly cancelled via ble_gap_disc_cancel() */
-    rc = ble_gap_disc(own_addr_type, BLE_HS_FOREVER, &scan_params, ble_manager_gap_event_stream, &session);
-    if (rc != 0) {
-        vSemaphoreDelete(session.done_semaphore);
-        xSemaphoreGive(s_ble_scan_mutex);
-        return ESP_FAIL;
-    }
+    while (!done) {
+        if (stop != NULL && *stop) {
+            break;
+        }
 
-    /* Block until DISC_COMPLETE fires (triggered by ble_gap_disc_cancel) */
-    xSemaphoreTake(session.done_semaphore, portMAX_DELAY);
+        rc = ble_gap_disc(
+            own_addr_type,
+            scan_window_ms,
+            &scan_params,
+            ble_manager_gap_event_stream,
+            &session);
+        if (rc != 0) {
+            vSemaphoreDelete(session.done_semaphore);
+            xSemaphoreGive(s_ble_scan_mutex);
+            return ESP_FAIL;
+        }
+
+        /* Wait for this window to complete. If callback completion is missed,
+         * force a cancel and wait briefly once more. This prevents the scan
+         * mutex from being held forever and locking out all BLE actions. */
+        if (xSemaphoreTake(session.done_semaphore, scan_wait_ticks) != pdTRUE) {
+            ble_gap_disc_cancel();
+            if (xSemaphoreTake(session.done_semaphore, cancel_wait_ticks) != pdTRUE) {
+                vSemaphoreDelete(session.done_semaphore);
+                xSemaphoreGive(s_ble_scan_mutex);
+                return ESP_ERR_TIMEOUT;
+            }
+        }
+
+        if (stop != NULL && *stop) {
+            done = true;
+        }
+    }
 
     vSemaphoreDelete(session.done_semaphore);
     xSemaphoreGive(s_ble_scan_mutex);

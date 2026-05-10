@@ -31,14 +31,12 @@ void fuse_radio_scene_ble_device_actions_on_enter(void* context) {
         FuseRadioBleDeviceActionIndexSaveToggle,
         fuse_radio_scene_ble_device_actions_callback,
         app);
-    if(app->ble_selection.is_saved) {
-        submenu_add_item(
-            app->submenu,
-            "Distance Mode",
-            FuseRadioBleDeviceActionIndexDistance,
-            fuse_radio_scene_ble_device_actions_callback,
-            app);
-    }
+    submenu_add_item(
+        app->submenu,
+        "Distance Mode",
+        FuseRadioBleDeviceActionIndexDistance,
+        fuse_radio_scene_ble_device_actions_callback,
+        app);
     submenu_add_item(
         app->submenu,
         "Scan Nearby",
