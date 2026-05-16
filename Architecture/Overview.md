@@ -4,6 +4,16 @@ This is a piece of firmware running on a custom ESP32 c6 board with an RGB LED, 
 
 The project is intended to extend the flipper zero in to Wifi, BLE, and ZigBee. Allowing diagnostic and investigatory tools
 
-## Core ideas
+## Pins
 
-The 
+### UART
+Default to UART port 1 as UART0 is usually shared with console and flash
+The default BAUD rate is 115200
+TX pin is 1
+RX pin is 0
+
+This will be linked up with the flippers RX and TX appropriately
+
+### USB
+
+### SD card
