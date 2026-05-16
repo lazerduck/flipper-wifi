@@ -6,8 +6,10 @@
 #include "modules/sd/sd_command.h"
 #include "modules/send/send_command.h"
 #include "modules/settings/settings_command.h"
+#include "modules/system/system_command.h"
 #include "modules/status_led/status_led_command.h"
 #include "modules/wifi/wifi_command.h"
+#include "modules/zigbee/zigbee_command.h"
 
 void command_router_dispatch(const char *command_line, const command_context_t *context)
 {
@@ -16,6 +18,10 @@ void command_router_dispatch(const char *command_line, const command_context_t *
     }
 
     if (ping_command_try_handle(command_line, context)) {
+        return;
+    }
+
+    if (system_command_try_handle(command_line, context)) {
         return;
     }
 
@@ -44,6 +50,10 @@ void command_router_dispatch(const char *command_line, const command_context_t *
     }
 
     if (settings_command_try_handle(command_line, context)) {
+        return;
+    }
+
+    if (zigbee_command_try_handle(command_line, context)) {
         return;
     }
 

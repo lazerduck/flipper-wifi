@@ -54,20 +54,15 @@ bool fuse_radio_scene_main_menu_on_event(void* context, SceneManagerEvent event)
         scene_manager_set_scene_state(app->scene_manager, FuseRadioSceneMainMenu, event.event);
 
         if(event.event == FuseRadioMainMenuIndexWifi) {
+            fuse_radio_app_start_system_mode_set_wifi(app);
             scene_manager_next_scene(app->scene_manager, FuseRadioSceneWifiMenu);
         } else if(event.event == FuseRadioMainMenuIndexBle) {
             scene_manager_next_scene(app->scene_manager, FuseRadioSceneBleMenu);
         } else if(event.event == FuseRadioMainMenuIndexLed) {
             scene_manager_next_scene(app->scene_manager, FuseRadioSceneLedMenu);
         } else if(event.event == FuseRadioMainMenuIndexZigbee) {
-            strncpy(app->placeholder_title, "Zigbee", sizeof(app->placeholder_title) - 1U);
-            app->placeholder_title[sizeof(app->placeholder_title) - 1U] = '\0';
-            strncpy(
-                app->placeholder_message,
-                "Menu slot is live.\nStack support comes later.",
-                sizeof(app->placeholder_message) - 1U);
-            app->placeholder_message[sizeof(app->placeholder_message) - 1U] = '\0';
-            scene_manager_next_scene(app->scene_manager, FuseRadioScenePlaceholder);
+            fuse_radio_app_start_system_mode_set_zigbee(app);
+            scene_manager_next_scene(app->scene_manager, FuseRadioSceneZigbeeMenu);
         } else if(event.event == FuseRadioMainMenuIndexStorage) {
             scene_manager_next_scene(app->scene_manager, FuseRadioSceneSdMenu);
         } else if(event.event == FuseRadioMainMenuIndexSettings) {

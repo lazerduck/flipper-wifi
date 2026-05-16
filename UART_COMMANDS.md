@@ -54,6 +54,7 @@ ERR UNKNOWN_COMMAND
 | `WIFI READ_MDNS host=<hostname>` | Implemented | Resolve an mDNS hostname on the connected network |
 | `WIFI PROMISCUOUS <ENTER|EXIT|SURVEY|WATCH|WATCH_STOP>` | Implemented | Enter passive capture mode and run RF observation commands |
 | `WIFI BEACON <START\|STOP> [channel=<1-13>] [duration_ms=<ms>]` | Implemented | Broadcast preset fake beacon SSIDs (idle mode only, ≤60 s, low TX power) |
+| `ZIGBEE <STATUS|LIST|PROFILE|BUTTON|JOIN|LEAVE|TRIGGER>` | Implemented (v1 scaffold) | Manage virtual button profiles and runtime network state |
 | `SEND <payload>` | Stub | Reserved, not implemented |
 | `QUERY <request>` | Stub | Reserved, not implemented |
 
@@ -224,6 +225,131 @@ If the subcommand is not recognized:
 
 ```text
 ERR UNKNOWN_WIFI_COMMAND
+```
+
+### `ZIGBEE`
+
+Zigbee is now a top-level profile/button command family.
+
+Current v1 scaffold behavior:
+
+- Stores profile and button names on SD card at `/sdcard/tables/zigbee/profiles_v1.txt`
+- Stores active runtime network state and frame counter in NVS
+- Supports 8 single-press virtual buttons per profile
+- Supports one active joined profile/network context at a time
+
+Base usage:
+
+```text
+ZIGBEE <STATUS|LIST|PROFILE|BUTTON|JOIN|LEAVE|TRIGGER>
+```
+
+#### `ZIGBEE STATUS`
+
+Request:
+
+```text
+ZIGBEE STATUS
+```
+
+Response:
+
+```text
+ZIGBEE_STATUS joined=<yes|no> active_profile=<id> pan_id=<0-65535> channel=<0-255> tx_counter=<n> profiles=<count> sd=<yes|no>
+```
+
+#### `ZIGBEE LIST`
+
+Request:
+
+```text
+ZIGBEE LIST
+```
+
+Response:
+
+```text
+ZIGBEE_LIST_START count=<n>
+ZIGBEE_PROFILE id=<id> name="<profile>" joined=<0|1> pan_id=<0-65535> channel=<0-255>
+ZIGBEE_BUTTON profile_id=<id> index=<1-8> name="<button>" press=single
+...
+ZIGBEE_LIST_DONE
+```
+
+#### `ZIGBEE PROFILE ...`
+
+Create a profile:
+
+```text
+ZIGBEE PROFILE CREATE name="Living Room"
+ZIGBEE_PROFILE_CREATED id=1
+```
+
+Rename a profile:
+
+```text
+ZIGBEE PROFILE RENAME id=1 name="Lounge"
+ZIGBEE_PROFILE_RENAMED
+```
+
+Delete a profile:
+
+```text
+ZIGBEE PROFILE DELETE id=1
+ZIGBEE_PROFILE_DELETED
+```
+
+#### `ZIGBEE BUTTON RENAME ...`
+
+Rename one of the 8 buttons in a profile:
+
+```text
+ZIGBEE BUTTON RENAME id=1 index=3 name="Lamp Toggle"
+ZIGBEE_BUTTON_RENAMED
+```
+
+#### `ZIGBEE JOIN`
+
+Bind the selected profile to active runtime network metadata (v1 scaffold):
+
+```text
+ZIGBEE JOIN id=1 pan=4660 channel=15
+ZIGBEE_JOINED
+```
+
+You can also use `channel=0` to try channels 11-26 automatically:
+
+```text
+ZIGBEE JOIN id=1 pan=0 channel=0
+```
+
+#### `ZIGBEE LEAVE`
+
+Leave current active profile/network context:
+
+```text
+ZIGBEE LEAVE
+ZIGBEE_LEFT
+```
+
+#### `ZIGBEE TRIGGER`
+
+Send one virtual single-press event:
+
+```text
+ZIGBEE TRIGGER id=1 index=3
+ZIGBEE_TRIGGERED counter=42
+```
+
+Error classes emitted by Zigbee commands:
+
+```text
+ERR ZIGBEE_INIT_FAILED
+ERR ZIGBEE_PROFILE_NOT_FOUND
+ERR ZIGBEE_INVALID_STATE
+ERR ZIGBEE_INVALID_ARG
+ERR ZIGBEE_NO_MEM
+ERR ZIGBEE_OP_FAILED
 ```
 
 ### `WIFI SCAN`

@@ -268,6 +268,20 @@ Current limitations that matter at the feature level:
 
 ---
 
+## Zigbee Build Compatibility Note
+
+For ESP-IDF 6.0 + `espressif/esp-zigbee-lib` 2.0.0, the project applies a configure-time compatibility patch to avoid mbedTLS v4 breakage in the managed Zigbee component.
+
+Current guardrails:
+
+- Zigbee dependency is pinned to `espressif/esp-zigbee-lib` `2.0.0` in `main/idf_component.yml`
+- Configure step runs `tools/zigbee_compat_patch.cmake` from `main/CMakeLists.txt`
+- Patch script is idempotent and rewrites managed Zigbee compatibility files after refreshes
+
+If Zigbee build errors return after dependency updates, first verify the pinned version and that `tools/zigbee_compat_patch.cmake` is still being executed during CMake configure.
+
+---
+
 ## Good future sections to extend
 
 If this file becomes the main capability tracker, useful next categories would be:

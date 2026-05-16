@@ -5,6 +5,7 @@
 
 #include "esp_err.h"
 
+#include "modules/system/system_mode_guard.h"
 #include "modules/wifi/connected/connected_command.h"
 #include "modules/wifi/promiscuous/promiscuous_command.h"
 #include "modules/wifi/beacon/beacon_command.h"
@@ -68,6 +69,10 @@ bool wifi_command_try_handle(const char *command_line, const command_context_t *
         return false;
     }
 
+    if (!system_mode_guard_command(context, SYSTEM_MODE_WIFI, "WIFI")) {
+        return true;
+    }
+
     if (command_line[4] == '\0') {
         command_context_write_line(context, "ERR USAGE WIFI <SCAN|STATUS|CONNECT|DISCONNECT|DISCOVER|HTTP|READ_MDNS|PROMISCUOUS|BEACON>\n");
         return true;
@@ -104,7 +109,9 @@ bool wifi_command_try_handle(const char *command_line, const command_context_t *
 
         err = wifi_manager_scan_aps(write_scan_result, &scan_context);
         if (err != ESP_OK) {
-            command_context_write_line(context, "ERR SCAN_FAILED\n");
+            char error_line[64];
+            snprintf(error_line, sizeof(error_line), "ERR SCAN_FAILED code=0x%X\n", (unsigned)err);
+            command_context_write_line(context, error_line);
         }
 
         return true;

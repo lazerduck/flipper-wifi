@@ -33,27 +33,32 @@
 #include <storage/storage.h>
 
 #define FUSE_RADIO_UART_BAUD_RATE     115200U
-#define FUSE_RADIO_MAX_LINE_LENGTH    320U
+#define FUSE_RADIO_MAX_LINE_LENGTH    256U
 #define FUSE_RADIO_STATUS_DETAIL_SIZE 64U
 #define FUSE_RADIO_STATUS_ERROR_SIZE  64U
 #define FUSE_RADIO_PLACEHOLDER_SIZE   64U
 #define FUSE_RADIO_MAX_PASSWORD_LEN   64U
 #define FUSE_RADIO_MAX_HOST_LEN       63U
 #define FUSE_RADIO_MAX_SAVED_NETWORKS 12U
-#define FUSE_RADIO_WIFI_INFO_SIZE     256U
-#define FUSE_RADIO_BLE_INFO_SIZE      1024U
-#define FUSE_RADIO_HTTP_INFO_SIZE     768U
-#define FUSE_RADIO_MDNS_INFO_SIZE     512U
-#define FUSE_RADIO_PROMISCUOUS_INFO_SIZE 1024U
+#define FUSE_RADIO_WIFI_INFO_SIZE     192U
+#define FUSE_RADIO_BLE_INFO_SIZE      640U
+#define FUSE_RADIO_HTTP_INFO_SIZE     512U
+#define FUSE_RADIO_MDNS_INFO_SIZE     320U
+#define FUSE_RADIO_PROMISCUOUS_INFO_SIZE 640U
 #define FUSE_RADIO_PROMISCUOUS_LIVE_SIZE 192U
 #define FUSE_RADIO_BEACON_INFO_SIZE    256U
-#define FUSE_RADIO_SD_INFO_SIZE        768U
+#define FUSE_RADIO_SD_INFO_SIZE        512U
 #define FUSE_RADIO_SD_PATH_SIZE        128U
-#define FUSE_RADIO_MAX_SD_ENTRIES      24U
+#define FUSE_RADIO_MAX_SD_ENTRIES      16U
 #define FUSE_RADIO_MAX_CONFIG_ENTRIES  16U
 #define FUSE_RADIO_CONFIG_KEY_SIZE      32U
 #define FUSE_RADIO_CONFIG_LABEL_SIZE    48U
-#define FUSE_RADIO_CONFIG_INFO_SIZE     512U
+#define FUSE_RADIO_CONFIG_INFO_SIZE     320U
+#define FUSE_RADIO_ZIGBEE_INFO_SIZE     384U
+#define FUSE_RADIO_MAX_ZIGBEE_PROFILES  8U
+#define FUSE_RADIO_ZIGBEE_PROFILE_NAME_SIZE 32U
+#define FUSE_RADIO_ZIGBEE_BUTTON_NAME_SIZE 24U
+#define FUSE_RADIO_ZIGBEE_BUTTON_COUNT   8U
 #define FUSE_RADIO_DETECT_TIMEOUT_MS  5000U
 #define FUSE_RADIO_PING_INTERVAL_MS   750U
 #define FUSE_RADIO_MODE_GUARD_POLL_MS 1000U
@@ -114,6 +119,18 @@ typedef enum {
     FuseRadioRequestLedAuto,
     FuseRadioRequestConfigGet,
     FuseRadioRequestConfigSet,
+    FuseRadioRequestZigbeeStatus,
+    FuseRadioRequestZigbeeList,
+    FuseRadioRequestZigbeeCreateProfile,
+    FuseRadioRequestZigbeeRenameProfile,
+    FuseRadioRequestZigbeeDeleteProfile,
+    FuseRadioRequestZigbeeRenameButton,
+    FuseRadioRequestZigbeeJoin,
+    FuseRadioRequestZigbeeLeave,
+    FuseRadioRequestZigbeeTrigger,
+    FuseRadioRequestZigbeeScan,
+    FuseRadioRequestSystemModeQuery,
+    FuseRadioRequestSystemModeSet,
 } FuseRadioRequest;
 
 typedef enum {
@@ -128,11 +145,28 @@ typedef struct {
     bool is_dir;
 } FuseRadioSdEntry;
 
+typedef struct {
+    uint32_t id;
+    uint16_t pan_id;
+    uint8_t channel;
+    bool joined;
+    char name[FUSE_RADIO_ZIGBEE_PROFILE_NAME_SIZE];
+    char buttons[FUSE_RADIO_ZIGBEE_BUTTON_COUNT][FUSE_RADIO_ZIGBEE_BUTTON_NAME_SIZE];
+} FuseRadioZigbeeProfile;
+
+typedef enum {
+    FuseRadioZigbeeNameEditNone,
+    FuseRadioZigbeeNameEditCreateProfile,
+    FuseRadioZigbeeNameEditRenameProfile,
+    FuseRadioZigbeeNameEditRenameButton,
+} FuseRadioZigbeeNameEditMode;
+
 typedef enum {
     FuseRadioTextInputNone,
     FuseRadioTextInputConnectSsid,
     FuseRadioTextInputConnectPassword,
     FuseRadioTextInputMdnsHost,
+    FuseRadioTextInputZigbeeName,
 } FuseRadioTextInputMode;
 
 typedef enum {
@@ -174,6 +208,9 @@ typedef enum {
     FuseRadioCustomEventConfigSetDone,
     FuseRadioCustomEventConfigFailed,
     FuseRadioCustomEventConfigNoSd,
+    FuseRadioCustomEventZigbeeRefresh,
+    FuseRadioCustomEventZigbeeNameDone,
+    FuseRadioCustomEventZigbeeJoinFailed,
 } FuseRadioCustomEvent;
 
 typedef enum {
@@ -376,6 +413,21 @@ struct FuseRadioApp {
     uint8_t ble_distance_history_count;
     FuseRadioSdAction sd_action;
     FuseRadioSdEntry sd_entries[FUSE_RADIO_MAX_SD_ENTRIES];
+
+    FuseRadioZigbeeProfile zigbee_profiles[FUSE_RADIO_MAX_ZIGBEE_PROFILES];
+    uint8_t zigbee_profile_count;
+    uint8_t zigbee_selected_profile_index;
+    uint8_t zigbee_selected_button_index;
+    uint32_t zigbee_active_profile_id;
+    uint32_t zigbee_last_counter;
+    uint16_t zigbee_active_pan_id;
+    uint8_t zigbee_active_channel;
+    FuseRadioZigbeeNameEditMode zigbee_name_edit_mode;
+    bool zigbee_joined;
+    bool zigbee_sd_available;
+    bool zigbee_dirty;
+    char zigbee_name_input[FUSE_RADIO_ZIGBEE_PROFILE_NAME_SIZE];
+    char zigbee_info_text[FUSE_RADIO_ZIGBEE_INFO_SIZE];
 };
 
 void fuse_radio_app_set_status(FuseRadioApp* app, const char* detail);
@@ -414,6 +466,22 @@ bool fuse_radio_app_repeat_wifi_promiscuous_action(FuseRadioApp* app);
 bool fuse_radio_app_start_wifi_beacon(FuseRadioApp* app, uint8_t channel, uint32_t duration_ms);
 bool fuse_radio_app_stop_wifi_beacon(FuseRadioApp* app);
 bool fuse_radio_app_start_sd_action(FuseRadioApp* app, FuseRadioSdAction action);
+bool fuse_radio_app_start_zigbee_status(FuseRadioApp* app);
+bool fuse_radio_app_start_zigbee_scan(FuseRadioApp* app);
+bool fuse_radio_app_start_zigbee_list(FuseRadioApp* app);
+bool fuse_radio_app_start_zigbee_create_profile(FuseRadioApp* app, const char* name);
+bool fuse_radio_app_start_zigbee_rename_profile(FuseRadioApp* app, uint32_t profile_id, const char* name);
+bool fuse_radio_app_start_zigbee_delete_profile(FuseRadioApp* app, uint32_t profile_id);
+bool fuse_radio_app_start_zigbee_rename_button(
+    FuseRadioApp* app,
+    uint32_t profile_id,
+    uint8_t button_index,
+    const char* name);
+bool fuse_radio_app_start_zigbee_join_profile(FuseRadioApp* app, uint32_t profile_id);
+bool fuse_radio_app_start_zigbee_leave(FuseRadioApp* app);
+bool fuse_radio_app_start_zigbee_trigger(FuseRadioApp* app, uint32_t profile_id, uint8_t button_index);
+bool fuse_radio_app_start_system_mode_set_wifi(FuseRadioApp* app);
+bool fuse_radio_app_start_system_mode_set_zigbee(FuseRadioApp* app);
 void fuse_radio_app_process_rx(FuseRadioApp* app);
 void fuse_radio_app_handle_tick(FuseRadioApp* app);
 void fuse_radio_app_refresh_status_widget(FuseRadioApp* app);

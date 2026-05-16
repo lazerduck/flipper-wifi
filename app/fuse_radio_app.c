@@ -1,6 +1,7 @@
 #include "fuse_radio_app_i.h"
 
 #include <gui/elements.h>
+#include <furi/core/memmgr.h>
 
 #include <ctype.h>
 #include <stdarg.h>
@@ -18,6 +19,7 @@
 #define FUSE_RADIO_BLE_SCAN_NORMAL_DURATION_MS 5000U
 #define FUSE_RADIO_BLE_SCAN_DEEP_DURATION_MS   30000U
 #define FUSE_RADIO_BLE_DISTANCE_INTERVAL_MS     500U
+#define TAG "FuseRadio"
 
 static size_t fuse_radio_app_strlcpy(char* dst, const char* src, size_t size) {
     const size_t length = strlen(src);
@@ -633,6 +635,8 @@ void fuse_radio_app_text_input_callback(void* context) {
             app->view_dispatcher, FuseRadioCustomEventConnectPasswordDone);
     } else if(app->text_input_mode == FuseRadioTextInputMdnsHost) {
         view_dispatcher_send_custom_event(app->view_dispatcher, FuseRadioCustomEventMdnsHostDone);
+    } else if(app->text_input_mode == FuseRadioTextInputZigbeeName) {
+        view_dispatcher_send_custom_event(app->view_dispatcher, FuseRadioCustomEventZigbeeNameDone);
     }
 }
 
@@ -1148,6 +1152,26 @@ static void fuse_radio_app_reset_wifi_status(FuseRadioApp* app) {
     fuse_radio_app_set_wifi_info_text(app, "Request a status update to poll the ESP.");
 }
 
+static void fuse_radio_app_reset_zigbee_state(FuseRadioApp* app) {
+    memset(app->zigbee_profiles, 0, sizeof(app->zigbee_profiles));
+    app->zigbee_profile_count = 0U;
+    app->zigbee_selected_profile_index = 0U;
+    app->zigbee_selected_button_index = 0U;
+    app->zigbee_active_profile_id = 0U;
+    app->zigbee_last_counter = 0U;
+    app->zigbee_active_pan_id = 0U;
+    app->zigbee_active_channel = 0U;
+    app->zigbee_name_edit_mode = FuseRadioZigbeeNameEditNone;
+    app->zigbee_name_input[0] = '\0';
+    app->zigbee_joined = false;
+    app->zigbee_sd_available = false;
+    app->zigbee_dirty = true;
+    snprintf(
+        app->zigbee_info_text,
+        sizeof(app->zigbee_info_text),
+        "Zigbee not queried yet.\nUse Refresh to load status.");
+}
+
 static void fuse_radio_app_update_wifi_info_text(FuseRadioApp* app) {
     snprintf(
         app->wifi_info_text,
@@ -1216,6 +1240,7 @@ static void fuse_radio_app_reset_session_state(FuseRadioApp* app) {
     fuse_radio_app_reset_mdns_results(app);
     fuse_radio_app_reset_promiscuous_results(app);
     fuse_radio_app_reset_wifi_status(app);
+    fuse_radio_app_reset_zigbee_state(app);
     app->current_request = FuseRadioRequestNone;
     app->text_input_mode = FuseRadioTextInputNone;
     app->promiscuous_preset = FuseRadioPromiscuousPresetNone;
@@ -1614,6 +1639,117 @@ static bool fuse_radio_app_send_sd_format_command(FuseRadioApp* app) {
     return fuse_radio_app_send_line(app, "SD FORMAT\n");
 }
 
+static bool fuse_radio_app_send_zigbee_status_command(FuseRadioApp* app) {
+    return fuse_radio_app_send_line(app, "ZIGBEE STATUS\n");
+}
+
+static bool fuse_radio_app_send_zigbee_scan_command(FuseRadioApp* app) {
+    return fuse_radio_app_send_line(app, "ZIGBEE SCAN\n");
+}
+
+static bool fuse_radio_app_send_zigbee_list_command(FuseRadioApp* app) {
+    return fuse_radio_app_send_line(app, "ZIGBEE LIST\n");
+}
+
+static bool fuse_radio_app_send_zigbee_profile_create_command(FuseRadioApp* app, const char* name) {
+    char command[128];
+    char quoted_name[96];
+
+    if(!fuse_radio_app_format_quoted_arg(quoted_name, sizeof(quoted_name), name)) {
+        return false;
+    }
+
+    snprintf(command, sizeof(command), "ZIGBEE PROFILE CREATE name=%s\n", quoted_name);
+    return fuse_radio_app_send_line(app, command);
+}
+
+static bool fuse_radio_app_send_zigbee_profile_rename_command(
+    FuseRadioApp* app,
+    uint32_t profile_id,
+    const char* name) {
+    char command[160];
+    char quoted_name[96];
+
+    if(!fuse_radio_app_format_quoted_arg(quoted_name, sizeof(quoted_name), name)) {
+        return false;
+    }
+
+    snprintf(
+        command,
+        sizeof(command),
+        "ZIGBEE PROFILE RENAME id=%lu name=%s\n",
+        (unsigned long)profile_id,
+        quoted_name);
+    return fuse_radio_app_send_line(app, command);
+}
+
+static bool fuse_radio_app_send_zigbee_profile_delete_command(FuseRadioApp* app, uint32_t profile_id) {
+    char command[80];
+
+    snprintf(command, sizeof(command), "ZIGBEE PROFILE DELETE id=%lu\n", (unsigned long)profile_id);
+    return fuse_radio_app_send_line(app, command);
+}
+
+static bool fuse_radio_app_send_zigbee_button_rename_command(
+    FuseRadioApp* app,
+    uint32_t profile_id,
+    uint8_t button_index,
+    const char* name) {
+    char command[168];
+    char quoted_name[96];
+
+    if(!fuse_radio_app_format_quoted_arg(quoted_name, sizeof(quoted_name), name)) {
+        return false;
+    }
+
+    snprintf(
+        command,
+        sizeof(command),
+        "ZIGBEE BUTTON RENAME id=%lu index=%u name=%s\n",
+        (unsigned long)profile_id,
+        (unsigned)(button_index + 1U),
+        quoted_name);
+    return fuse_radio_app_send_line(app, command);
+}
+
+static bool fuse_radio_app_send_zigbee_join_command(
+    FuseRadioApp* app,
+    uint32_t profile_id,
+    uint16_t pan_id,
+    uint8_t channel) {
+    char command[96];
+
+    snprintf(
+        command,
+        sizeof(command),
+        "ZIGBEE JOIN id=%lu pan=%u channel=%u\n",
+        (unsigned long)profile_id,
+        (unsigned)pan_id,
+        (unsigned)channel);
+    return fuse_radio_app_send_line(app, command);
+}
+
+static bool fuse_radio_app_send_zigbee_leave_command(FuseRadioApp* app) {
+    return fuse_radio_app_send_line(app, "ZIGBEE LEAVE\n");
+}
+
+static bool fuse_radio_app_send_zigbee_trigger_command(
+    FuseRadioApp* app,
+    uint32_t profile_id,
+    uint8_t button_index) {
+    char command[96];
+
+    snprintf(
+        command,
+        sizeof(command),
+        "ZIGBEE TRIGGER id=%lu index=%u\n",
+        (unsigned long)profile_id,
+        (unsigned)(button_index + 1U));
+    return fuse_radio_app_send_line(app, command);
+}
+
+
+
 bool fuse_radio_app_start_config_get(FuseRadioApp* app) {
     if(app->module_state != FuseRadioModuleStateDetected) {
         fuse_radio_app_set_error(app, "Board is not ready.");
@@ -2004,6 +2140,12 @@ static void fuse_radio_app_mark_detected(FuseRadioApp* app) {
     app->startup_power_retry_count = 0U;
     app->last_error[0] = '\0';
     fuse_radio_app_set_status(app, "Board detected. Opening control menu.");
+}
+
+static bool fuse_radio_app_send_system_mode_set_command(FuseRadioApp* app, const char* mode_str) {
+    char command[64];
+    snprintf(command, sizeof(command), "SYSTEM MODE SET %s\n", mode_str);
+    return fuse_radio_app_send_line(app, command);
 }
 
 static void fuse_radio_app_parse_mdns_line(FuseRadioApp* app, const char* line) {
@@ -2872,6 +3014,12 @@ static void fuse_radio_app_handle_error_line(FuseRadioApp* app, const char* line
         return;
     }
 
+    if(app->current_request == FuseRadioRequestSystemModeSet) {
+        app->current_request = FuseRadioRequestNone;
+        fuse_radio_app_set_status(app, line);
+        return;
+    }
+
     if(app->current_request == FuseRadioRequestConfigGet ||
        app->current_request == FuseRadioRequestConfigSet) {
         app->current_request = FuseRadioRequestNone;
@@ -2884,6 +3032,39 @@ static void fuse_radio_app_handle_error_line(FuseRadioApp* app, const char* line
                 app->config_info_text, line, sizeof(app->config_info_text));
             view_dispatcher_send_custom_event(
                 app->view_dispatcher, FuseRadioCustomEventConfigFailed);
+        }
+        return;
+    }
+
+    if(app->current_request == FuseRadioRequestZigbeeStatus ||
+       app->current_request == FuseRadioRequestZigbeeList ||
+       app->current_request == FuseRadioRequestZigbeeCreateProfile ||
+             app->current_request == FuseRadioRequestZigbeeRenameProfile ||
+             app->current_request == FuseRadioRequestZigbeeDeleteProfile ||
+             app->current_request == FuseRadioRequestZigbeeRenameButton ||
+       app->current_request == FuseRadioRequestZigbeeLeave ||
+       app->current_request == FuseRadioRequestZigbeeTrigger ||
+       app->current_request == FuseRadioRequestZigbeeScan) {
+        app->current_request = FuseRadioRequestNone;
+        fuse_radio_app_strlcpy(app->zigbee_info_text, line, sizeof(app->zigbee_info_text));
+        app->zigbee_dirty = true;
+        view_dispatcher_send_custom_event(app->view_dispatcher, FuseRadioCustomEventZigbeeRefresh);
+        return;
+    }
+
+    if(app->current_request == FuseRadioRequestZigbeeJoin) {
+        app->current_request = FuseRadioRequestNone;
+        if(strncmp(line, "ERR", 3) == 0) {
+            /* join failed - show why and navigate back to profile actions */
+            fuse_radio_app_strlcpy(app->zigbee_info_text, line, sizeof(app->zigbee_info_text));
+            app->zigbee_dirty = true;
+            view_dispatcher_send_custom_event(
+                app->view_dispatcher, FuseRadioCustomEventZigbeeJoinFailed);
+        } else {
+            /* join succeeded - refresh status */
+            fuse_radio_app_strlcpy(app->zigbee_info_text, line, sizeof(app->zigbee_info_text));
+            app->zigbee_dirty = true;
+            view_dispatcher_send_custom_event(app->view_dispatcher, FuseRadioCustomEventZigbeeRefresh);
         }
         return;
     }
@@ -2913,6 +3094,128 @@ static void fuse_radio_app_parse_led_status(FuseRadioApp* app, const char* line)
     app->led_red = (uint8_t)strtoul(red + 5, NULL, 10);
     app->led_green = (uint8_t)strtoul(green + 7, NULL, 10);
     app->led_blue = (uint8_t)strtoul(blue + 6, NULL, 10);
+}
+
+static FuseRadioZigbeeProfile* fuse_radio_app_find_zigbee_profile(FuseRadioApp* app, uint32_t id) {
+    for(uint8_t i = 0U; i < app->zigbee_profile_count; i++) {
+        if(app->zigbee_profiles[i].id == id) {
+            return &app->zigbee_profiles[i];
+        }
+    }
+
+    return NULL;
+}
+
+static void fuse_radio_app_parse_zigbee_status(FuseRadioApp* app, const char* line) {
+    char joined[8] = {0};
+    char active_profile[24] = {0};
+    char pan_id[24] = {0};
+    char channel[24] = {0};
+    char counter[24] = {0};
+    char profile_count[24] = {0};
+    char sd[8] = {0};
+
+    if(!fuse_radio_app_config_extract(line, "joined=", joined, sizeof(joined)) ||
+       !fuse_radio_app_config_extract(line, "active_profile=", active_profile, sizeof(active_profile)) ||
+       !fuse_radio_app_config_extract(line, "pan_id=", pan_id, sizeof(pan_id)) ||
+       !fuse_radio_app_config_extract(line, "channel=", channel, sizeof(channel)) ||
+       !fuse_radio_app_config_extract(line, "tx_counter=", counter, sizeof(counter)) ||
+       !fuse_radio_app_config_extract(line, "profiles=", profile_count, sizeof(profile_count)) ||
+       !fuse_radio_app_config_extract(line, "sd=", sd, sizeof(sd))) {
+        return;
+    }
+
+    app->zigbee_joined = strcmp(joined, "yes") == 0;
+    app->zigbee_active_profile_id = (uint32_t)strtoul(active_profile, NULL, 10);
+    app->zigbee_active_pan_id = (uint16_t)strtoul(pan_id, NULL, 10);
+    app->zigbee_active_channel = (uint8_t)strtoul(channel, NULL, 10);
+    app->zigbee_last_counter = (uint32_t)strtoul(counter, NULL, 10);
+    app->zigbee_sd_available = strcmp(sd, "yes") == 0;
+
+    snprintf(
+        app->zigbee_info_text,
+        sizeof(app->zigbee_info_text),
+        "Zigbee Status\n"
+        "Joined: %s\n"
+        "Active profile: %lu\n"
+        "PAN: %u\n"
+        "Channel: %u\n"
+        "TX counter: %lu\n"
+        "Profiles: %s\n"
+        "SD: %s",
+        app->zigbee_joined ? "yes" : "no",
+        (unsigned long)app->zigbee_active_profile_id,
+        (unsigned)app->zigbee_active_pan_id,
+        (unsigned)app->zigbee_active_channel,
+        (unsigned long)app->zigbee_last_counter,
+        profile_count,
+        app->zigbee_sd_available ? "yes" : "no");
+    app->zigbee_dirty = true;
+}
+
+static void fuse_radio_app_parse_zigbee_profile(FuseRadioApp* app, const char* line) {
+    char id[24] = {0};
+    char joined[8] = {0};
+    char pan_id[24] = {0};
+    char channel[24] = {0};
+    char name[FUSE_RADIO_ZIGBEE_PROFILE_NAME_SIZE] = {0};
+
+    if(app->zigbee_profile_count >= FUSE_RADIO_MAX_ZIGBEE_PROFILES) {
+        return;
+    }
+
+    if(!fuse_radio_app_config_extract(line, "id=", id, sizeof(id)) ||
+       !fuse_radio_app_config_extract(line, "name=", name, sizeof(name)) ||
+       !fuse_radio_app_config_extract(line, "joined=", joined, sizeof(joined)) ||
+       !fuse_radio_app_config_extract(line, "pan_id=", pan_id, sizeof(pan_id)) ||
+       !fuse_radio_app_config_extract(line, "channel=", channel, sizeof(channel))) {
+        return;
+    }
+
+    FuseRadioZigbeeProfile* profile = &app->zigbee_profiles[app->zigbee_profile_count++];
+    memset(profile, 0, sizeof(*profile));
+
+    profile->id = (uint32_t)strtoul(id, NULL, 10);
+    profile->joined = strcmp(joined, "1") == 0;
+    profile->pan_id = (uint16_t)strtoul(pan_id, NULL, 10);
+    profile->channel = (uint8_t)strtoul(channel, NULL, 10);
+    fuse_radio_app_strlcpy(profile->name, name, sizeof(profile->name));
+
+    for(uint8_t i = 0U; i < FUSE_RADIO_ZIGBEE_BUTTON_COUNT; i++) {
+        snprintf(profile->buttons[i], sizeof(profile->buttons[i]), "Button %u", (unsigned)(i + 1U));
+    }
+}
+
+static void fuse_radio_app_parse_zigbee_button(FuseRadioApp* app, const char* line) {
+    char profile_id[24] = {0};
+    char index[8] = {0};
+    char name[FUSE_RADIO_ZIGBEE_BUTTON_NAME_SIZE] = {0};
+    uint32_t id_num;
+    uint32_t index_num;
+    FuseRadioZigbeeProfile* profile;
+
+    if(!fuse_radio_app_config_extract(line, "profile_id=", profile_id, sizeof(profile_id)) ||
+       !fuse_radio_app_config_extract(line, "index=", index, sizeof(index)) ||
+       !fuse_radio_app_config_extract(line, "name=", name, sizeof(name))) {
+        return;
+    }
+
+    id_num = (uint32_t)strtoul(profile_id, NULL, 10);
+    index_num = (uint32_t)strtoul(index, NULL, 10);
+
+    if(index_num == 0U || index_num > FUSE_RADIO_ZIGBEE_BUTTON_COUNT) {
+        return;
+    }
+
+    profile = fuse_radio_app_find_zigbee_profile(app, id_num);
+    if(profile == NULL) {
+        return;
+    }
+
+    fuse_radio_app_strlcpy(
+        profile->buttons[index_num - 1U],
+        name,
+        sizeof(profile->buttons[index_num - 1U]));
 }
 
 static void fuse_radio_app_handle_line(FuseRadioApp* app, const char* line) {
@@ -3645,9 +3948,306 @@ static void fuse_radio_app_handle_line(FuseRadioApp* app, const char* line) {
         app->current_request = FuseRadioRequestNone;
         view_dispatcher_send_custom_event(
             app->view_dispatcher, FuseRadioCustomEventConfigSetDone);
+    } else if(strncmp(line, "ZIGBEE_STATUS ", 14) == 0) {
+        app->current_request = FuseRadioRequestNone;
+        fuse_radio_app_parse_zigbee_status(app, line);
+        view_dispatcher_send_custom_event(app->view_dispatcher, FuseRadioCustomEventZigbeeRefresh);
+    } else if(strncmp(line, "ZIGBEE_LIST_START ", 18) == 0) {
+        app->current_request = FuseRadioRequestZigbeeList;
+        app->zigbee_profile_count = 0U;
+        app->zigbee_dirty = true;
+    } else if(strncmp(line, "ZIGBEE_PROFILE ", 15) == 0) {
+        fuse_radio_app_parse_zigbee_profile(app, line);
+        app->zigbee_dirty = true;
+    } else if(strncmp(line, "ZIGBEE_BUTTON ", 14) == 0) {
+        fuse_radio_app_parse_zigbee_button(app, line);
+        app->zigbee_dirty = true;
+    } else if(strcmp(line, "ZIGBEE_LIST_DONE") == 0) {
+        app->current_request = FuseRadioRequestNone;
+        app->zigbee_dirty = true;
+        view_dispatcher_send_custom_event(app->view_dispatcher, FuseRadioCustomEventZigbeeRefresh);
+    } else if(strncmp(line, "ZIGBEE_PROFILE_CREATED ", 23) == 0) {
+        app->current_request = FuseRadioRequestNone;
+        fuse_radio_app_strlcpy(app->zigbee_info_text, line, sizeof(app->zigbee_info_text));
+        app->zigbee_dirty = true;
+        fuse_radio_app_start_zigbee_list(app);
+        view_dispatcher_send_custom_event(app->view_dispatcher, FuseRadioCustomEventZigbeeRefresh);
+    } else if(strcmp(line, "ZIGBEE_PROFILE_RENAMED") == 0 ||
+              strcmp(line, "ZIGBEE_PROFILE_DELETED") == 0 ||
+              strcmp(line, "ZIGBEE_BUTTON_RENAMED") == 0 ||
+              strcmp(line, "ZIGBEE_JOINED") == 0 ||
+              strcmp(line, "ZIGBEE_LEFT") == 0) {
+        app->current_request = FuseRadioRequestNone;
+        fuse_radio_app_strlcpy(app->zigbee_info_text, line, sizeof(app->zigbee_info_text));
+        app->zigbee_dirty = true;
+        fuse_radio_app_start_zigbee_status(app);
+        fuse_radio_app_start_zigbee_list(app);
+        view_dispatcher_send_custom_event(app->view_dispatcher, FuseRadioCustomEventZigbeeRefresh);
+    } else if(strncmp(line, "ZIGBEE_TRIGGERED ", 16) == 0) {
+        char counter[24] = {0};
+        app->current_request = FuseRadioRequestNone;
+        if(fuse_radio_app_config_extract(line, "counter=", counter, sizeof(counter))) {
+            app->zigbee_last_counter = (uint32_t)strtoul(counter, NULL, 10);
+        }
+        snprintf(
+            app->zigbee_info_text,
+            sizeof(app->zigbee_info_text),
+            "Button trigger sent.\nCounter: %lu",
+            (unsigned long)app->zigbee_last_counter);
+        app->zigbee_dirty = true;
+        view_dispatcher_send_custom_event(app->view_dispatcher, FuseRadioCustomEventZigbeeRefresh);
     } else if(strncmp(line, "ERR ", 4) == 0) {
         fuse_radio_app_handle_error_line(app, line);
     }
+}
+
+bool fuse_radio_app_start_zigbee_status(FuseRadioApp* app) {
+    if(app->module_state != FuseRadioModuleStateDetected) {
+        fuse_radio_app_strlcpy(app->zigbee_info_text, "Board is not ready.", sizeof(app->zigbee_info_text));
+        app->zigbee_dirty = true;
+        return false;
+    }
+
+    app->current_request = FuseRadioRequestZigbeeStatus;
+    if(!fuse_radio_app_send_zigbee_status_command(app)) {
+        app->current_request = FuseRadioRequestNone;
+        fuse_radio_app_strlcpy(app->zigbee_info_text, "UART write failed.", sizeof(app->zigbee_info_text));
+        app->zigbee_dirty = true;
+        return false;
+    }
+
+    return true;
+}
+
+bool fuse_radio_app_start_zigbee_scan(FuseRadioApp* app) {
+    if(app->module_state != FuseRadioModuleStateDetected) {
+        fuse_radio_app_strlcpy(app->zigbee_info_text, "Board is not ready.", sizeof(app->zigbee_info_text));
+        app->zigbee_dirty = true;
+        return false;
+    }
+
+    fuse_radio_app_strlcpy(
+        app->zigbee_info_text,
+        "Scanning channels 11-26...\nThis takes ~20 seconds.\nLooking for any\nZigbee networks.",
+        sizeof(app->zigbee_info_text));
+    app->zigbee_dirty = true;
+    view_dispatcher_send_custom_event(app->view_dispatcher, FuseRadioCustomEventZigbeeRefresh);
+
+    app->current_request = FuseRadioRequestZigbeeScan;
+    if(!fuse_radio_app_send_zigbee_scan_command(app)) {
+        app->current_request = FuseRadioRequestNone;
+        fuse_radio_app_strlcpy(app->zigbee_info_text, "UART write failed.", sizeof(app->zigbee_info_text));
+        app->zigbee_dirty = true;
+        return false;
+    }
+
+    return true;
+}
+
+bool fuse_radio_app_start_zigbee_list(FuseRadioApp* app) {
+    if(app->module_state != FuseRadioModuleStateDetected) {
+        fuse_radio_app_strlcpy(app->zigbee_info_text, "Board is not ready.", sizeof(app->zigbee_info_text));
+        app->zigbee_dirty = true;
+        return false;
+    }
+
+    app->current_request = FuseRadioRequestZigbeeList;
+    app->zigbee_profile_count = 0U;
+    if(!fuse_radio_app_send_zigbee_list_command(app)) {
+        app->current_request = FuseRadioRequestNone;
+        fuse_radio_app_strlcpy(app->zigbee_info_text, "UART write failed.", sizeof(app->zigbee_info_text));
+        app->zigbee_dirty = true;
+        return false;
+    }
+
+    return true;
+}
+
+bool fuse_radio_app_start_zigbee_create_profile(FuseRadioApp* app, const char* name) {
+    if(app->module_state != FuseRadioModuleStateDetected || name == NULL || name[0] == '\0') {
+        return false;
+    }
+
+    app->current_request = FuseRadioRequestZigbeeCreateProfile;
+    if(!fuse_radio_app_send_zigbee_profile_create_command(app, name)) {
+        app->current_request = FuseRadioRequestNone;
+        fuse_radio_app_strlcpy(app->zigbee_info_text, "UART write failed.", sizeof(app->zigbee_info_text));
+        app->zigbee_dirty = true;
+        return false;
+    }
+
+    return true;
+}
+
+bool fuse_radio_app_start_zigbee_rename_profile(FuseRadioApp* app, uint32_t profile_id, const char* name) {
+    if(app->module_state != FuseRadioModuleStateDetected || profile_id == 0U || name == NULL ||
+       name[0] == '\0') {
+        return false;
+    }
+
+    app->current_request = FuseRadioRequestZigbeeRenameProfile;
+    if(!fuse_radio_app_send_zigbee_profile_rename_command(app, profile_id, name)) {
+        app->current_request = FuseRadioRequestNone;
+        fuse_radio_app_strlcpy(app->zigbee_info_text, "UART write failed.", sizeof(app->zigbee_info_text));
+        app->zigbee_dirty = true;
+        return false;
+    }
+
+    return true;
+}
+
+bool fuse_radio_app_start_zigbee_delete_profile(FuseRadioApp* app, uint32_t profile_id) {
+    if(app->module_state != FuseRadioModuleStateDetected || profile_id == 0U) {
+        return false;
+    }
+
+    app->current_request = FuseRadioRequestZigbeeDeleteProfile;
+    if(!fuse_radio_app_send_zigbee_profile_delete_command(app, profile_id)) {
+        app->current_request = FuseRadioRequestNone;
+        fuse_radio_app_strlcpy(app->zigbee_info_text, "UART write failed.", sizeof(app->zigbee_info_text));
+        app->zigbee_dirty = true;
+        return false;
+    }
+
+    return true;
+}
+
+bool fuse_radio_app_start_zigbee_rename_button(
+    FuseRadioApp* app,
+    uint32_t profile_id,
+    uint8_t button_index,
+    const char* name) {
+    if(app->module_state != FuseRadioModuleStateDetected || profile_id == 0U ||
+       button_index >= FUSE_RADIO_ZIGBEE_BUTTON_COUNT || name == NULL || name[0] == '\0') {
+        return false;
+    }
+
+    app->current_request = FuseRadioRequestZigbeeRenameButton;
+    if(!fuse_radio_app_send_zigbee_button_rename_command(app, profile_id, button_index, name)) {
+        app->current_request = FuseRadioRequestNone;
+        fuse_radio_app_strlcpy(app->zigbee_info_text, "UART write failed.", sizeof(app->zigbee_info_text));
+        app->zigbee_dirty = true;
+        return false;
+    }
+
+    return true;
+}
+
+bool fuse_radio_app_start_zigbee_join_profile(FuseRadioApp* app, uint32_t profile_id) {
+    uint16_t pan_id = app->zigbee_active_pan_id;
+    uint8_t channel = app->zigbee_active_channel >= 11U && app->zigbee_active_channel <= 26U ?
+                          app->zigbee_active_channel :
+                          0U;
+
+    if(app->module_state != FuseRadioModuleStateDetected || profile_id == 0U) {
+        return false;
+    }
+
+    if(channel == 0U) {
+        snprintf(
+            app->zigbee_info_text,
+            sizeof(app->zigbee_info_text),
+            "Joining network...\n"
+            "Profile: %lu\n"
+            "PAN request: %u\n"
+            "Channel request: auto\n"
+            "Scan: 11-26",
+            (unsigned long)profile_id,
+            (unsigned)pan_id);
+    } else {
+        snprintf(
+            app->zigbee_info_text,
+            sizeof(app->zigbee_info_text),
+            "Joining network...\n"
+            "Profile: %lu\n"
+            "PAN request: %u\n"
+            "Channel request: %u\n"
+            "Scan: fixed",
+            (unsigned long)profile_id,
+            (unsigned)pan_id,
+            (unsigned)channel);
+    }
+    app->zigbee_dirty = true;
+    view_dispatcher_send_custom_event(app->view_dispatcher, FuseRadioCustomEventZigbeeRefresh);
+
+    app->current_request = FuseRadioRequestZigbeeJoin;
+    if(!fuse_radio_app_send_zigbee_join_command(app, profile_id, pan_id, channel)) {
+        app->current_request = FuseRadioRequestNone;
+        fuse_radio_app_strlcpy(app->zigbee_info_text, "UART write failed.", sizeof(app->zigbee_info_text));
+        app->zigbee_dirty = true;
+        return false;
+    }
+
+    return true;
+}
+
+bool fuse_radio_app_start_zigbee_leave(FuseRadioApp* app) {
+    if(app->module_state != FuseRadioModuleStateDetected) {
+        return false;
+    }
+
+    app->current_request = FuseRadioRequestZigbeeLeave;
+    if(!fuse_radio_app_send_zigbee_leave_command(app)) {
+        app->current_request = FuseRadioRequestNone;
+        fuse_radio_app_strlcpy(app->zigbee_info_text, "UART write failed.", sizeof(app->zigbee_info_text));
+        app->zigbee_dirty = true;
+        return false;
+    }
+
+    return true;
+}
+
+bool fuse_radio_app_start_zigbee_trigger(FuseRadioApp* app, uint32_t profile_id, uint8_t button_index) {
+    if(app->module_state != FuseRadioModuleStateDetected || profile_id == 0U ||
+       button_index >= FUSE_RADIO_ZIGBEE_BUTTON_COUNT) {
+        return false;
+    }
+
+    app->current_request = FuseRadioRequestZigbeeTrigger;
+    if(!fuse_radio_app_send_zigbee_trigger_command(app, profile_id, button_index)) {
+        app->current_request = FuseRadioRequestNone;
+        fuse_radio_app_strlcpy(app->zigbee_info_text, "UART write failed.", sizeof(app->zigbee_info_text));
+        app->zigbee_dirty = true;
+        return false;
+    }
+
+    return true;
+}
+
+bool fuse_radio_app_start_system_mode_set_wifi(FuseRadioApp* app) {
+    furi_assert(app);
+
+    if(app->module_state != FuseRadioModuleStateDetected) {
+        fuse_radio_app_set_status(app, "Board is not ready.");
+        return false;
+    }
+
+    app->current_request = FuseRadioRequestSystemModeSet;
+    if(!fuse_radio_app_send_system_mode_set_command(app, "WIFI")) {
+        app->current_request = FuseRadioRequestNone;
+        fuse_radio_app_set_status(app, "UART write failed.");
+        return false;
+    }
+
+    return true;
+}
+
+bool fuse_radio_app_start_system_mode_set_zigbee(FuseRadioApp* app) {
+    furi_assert(app);
+
+    if(app->module_state != FuseRadioModuleStateDetected) {
+        fuse_radio_app_set_status(app, "Board is not ready.");
+        return false;
+    }
+
+    app->current_request = FuseRadioRequestSystemModeSet;
+    if(!fuse_radio_app_send_system_mode_set_command(app, "ZIGBEE")) {
+        app->current_request = FuseRadioRequestNone;
+        fuse_radio_app_set_status(app, "UART write failed.");
+        return false;
+    }
+
+    return true;
 }
 
 void fuse_radio_app_process_rx(FuseRadioApp* app) {
@@ -4575,8 +5175,99 @@ void fuse_radio_app_handle_tick(FuseRadioApp* app) {
     }
 }
 
+static void fuse_radio_app_free_partial(FuseRadioApp* app) {
+    if(!app) {
+        return;
+    }
+
+    if(app->credentials_format) {
+        flipper_format_free(app->credentials_format);
+    }
+    if(app->rx_stream) {
+        furi_stream_buffer_free(app->rx_stream);
+    }
+
+    if(app->gatt_browser_view) {
+        fuse_radio_gatt_browser_view_free(app->gatt_browser_view);
+    }
+    if(app->ble_distance_view) {
+        fuse_radio_ble_distance_view_free(app->ble_distance_view);
+    }
+    if(app->watch_result_view) {
+        fuse_radio_watch_result_view_free(app->watch_result_view);
+    }
+    if(app->watch_live_view) {
+        fuse_radio_watch_live_view_free(app->watch_live_view);
+    }
+    if(app->survey_result_view) {
+        fuse_radio_survey_result_view_free(app->survey_result_view);
+    }
+    if(app->survey_progress_view) {
+        fuse_radio_survey_progress_view_free(app->survey_progress_view);
+    }
+    if(app->survey_preset_view) {
+        fuse_radio_survey_preset_view_free(app->survey_preset_view);
+    }
+    if(app->discover_result_view) {
+        fuse_radio_discover_result_view_free(app->discover_result_view);
+    }
+    if(app->discover_progress_view) {
+        fuse_radio_discover_progress_view_free(app->discover_progress_view);
+    }
+    if(app->value_picker_view) {
+        fuse_radio_value_picker_view_free(app->value_picker_view);
+    }
+    if(app->channel_picker_view) {
+        fuse_radio_channel_picker_view_free(app->channel_picker_view);
+    }
+    if(app->text_input) {
+        text_input_free(app->text_input);
+    }
+    if(app->ble_scan_view) {
+        fuse_radio_ble_scan_view_free(app->ble_scan_view);
+    }
+    if(app->scan_view) {
+        fuse_radio_scan_view_free(app->scan_view);
+    }
+    if(app->startup_view) {
+        fuse_radio_startup_view_free(app->startup_view);
+    }
+    if(app->variable_item_list) {
+        variable_item_list_free(app->variable_item_list);
+    }
+    if(app->submenu) {
+        submenu_free(app->submenu);
+    }
+    if(app->widget) {
+        widget_free(app->widget);
+    }
+    if(app->scene_manager) {
+        scene_manager_free(app->scene_manager);
+    }
+    if(app->view_dispatcher) {
+        view_dispatcher_free(app->view_dispatcher);
+    }
+
+    if(app->power) {
+        furi_record_close(RECORD_POWER);
+    }
+    if(app->storage) {
+        furi_record_close(RECORD_STORAGE);
+    }
+    if(app->gui) {
+        furi_record_close(RECORD_GUI);
+    }
+
+    free(app);
+}
+
 FuseRadioApp* fuse_radio_app_alloc(void) {
+    FURI_LOG_I(TAG, "alloc: begin free_heap=%lu", (unsigned long)memmgr_get_free_heap());
     FuseRadioApp* app = malloc(sizeof(FuseRadioApp));
+    if(!app) {
+        FURI_LOG_E(TAG, "alloc: app struct malloc failed free_heap=%lu", (unsigned long)memmgr_get_free_heap());
+        return NULL;
+    }
     memset(app, 0, sizeof(FuseRadioApp));
 
     app->gui = furi_record_open(RECORD_GUI);
@@ -4604,6 +5295,20 @@ FuseRadioApp* fuse_radio_app_alloc(void) {
     app->power = furi_record_open(RECORD_POWER);
     app->storage = furi_record_open(RECORD_STORAGE);
     app->credentials_format = flipper_format_file_alloc(app->storage);
+
+    if(!app->gui || !app->view_dispatcher || !app->scene_manager || !app->widget || !app->submenu ||
+       !app->startup_view || !app->scan_view || !app->ble_scan_view || !app->text_input ||
+       !app->channel_picker_view || !app->value_picker_view || !app->discover_progress_view ||
+       !app->discover_result_view || !app->survey_preset_view || !app->survey_progress_view ||
+       !app->survey_result_view || !app->watch_live_view || !app->watch_result_view ||
+       !app->ble_distance_view || !app->gatt_browser_view || !app->variable_item_list ||
+       !app->rx_stream || !app->power || !app->storage || !app->credentials_format) {
+        FURI_LOG_E(TAG, "alloc: sub-allocation failed free_heap=%lu", (unsigned long)memmgr_get_free_heap());
+        fuse_radio_app_free_partial(app);
+        return NULL;
+    }
+
+    FURI_LOG_I(TAG, "alloc: core objects ready free_heap=%lu", (unsigned long)memmgr_get_free_heap());
 
     app->ble_scan_mode = FuseRadioBleScanModeNormal;
     fuse_radio_app_reset_wifi_status(app);
@@ -4711,7 +5416,9 @@ FuseRadioApp* fuse_radio_app_alloc(void) {
         app->ble_distance_view, fuse_radio_app_ble_distance_view_callback, app);
 
     fuse_radio_app_start_session(app);
+    FURI_LOG_I(TAG, "alloc: session bootstrap requested free_heap=%lu", (unsigned long)memmgr_get_free_heap());
     scene_manager_next_scene(app->scene_manager, FuseRadioSceneStatus);
+    FURI_LOG_I(TAG, "alloc: complete free_heap=%lu", (unsigned long)memmgr_get_free_heap());
 
     return app;
 }

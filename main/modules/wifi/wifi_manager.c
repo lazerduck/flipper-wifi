@@ -3,12 +3,18 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include "esp_log.h"
 
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
 #include "nvs_flash.h"
+#if CONFIG_ESP_COEX_ENABLED
+#include "esp_coexist.h"
+#endif
 
+
+#define WIFI_MANAGER_TAG "wifi_manager"
 #define WIFI_SCAN_MAX_APS 20
 #define WIFI_SCAN_LINE_MAX_LENGTH 160
 
@@ -274,6 +280,15 @@ static esp_err_t wifi_stack_init(void)
         return err;
     }
 
+#if CONFIG_ESP_COEX_ENABLED
+    err = esp_coex_preference_set(ESP_COEX_PREFER_WIFI);
+    if (err != ESP_OK) {
+        ESP_LOGW(WIFI_MANAGER_TAG, "coex prefer wifi failed: 0x%X", (unsigned)err);
+    } else {
+        ESP_LOGI(WIFI_MANAGER_TAG, "coex preference set: WIFI");
+    }
+#endif
+
     return ESP_OK;
 }
 
@@ -293,6 +308,7 @@ esp_err_t wifi_manager_init(void)
     s_status.mode = WIFI_MANAGER_MODE_IDLE;
     s_status.action = WIFI_MANAGER_ACTION_NONE;
     clear_connected_ssid();
+    ESP_LOGI(WIFI_MANAGER_TAG, "initialized");
     notify_state_changed();
     return ESP_OK;
 }
@@ -359,11 +375,58 @@ esp_err_t wifi_manager_scan_aps(wifi_scan_result_writer_t write_line, void *cont
     wifi_manager_action_t previous_action;
 
     if (!s_wifi_initialized) {
+        ESP_LOGW(WIFI_MANAGER_TAG, "scan rejected: wifi not initialized");
         return ESP_ERR_INVALID_STATE;
     }
 
     if (s_status.mode == WIFI_MANAGER_MODE_PROMISCUOUS) {
+        ESP_LOGW(WIFI_MANAGER_TAG, "scan rejected: promiscuous mode active");
         return ESP_ERR_INVALID_STATE;
+    }
+
+    ESP_LOGI(WIFI_MANAGER_TAG, "scan start");
+
+    /* Force known-good station scan state in case previous operations left Wi-Fi in a mixed mode. */
+    esp_err_t prep_err = esp_wifi_set_mode(WIFI_MODE_STA);
+    if (prep_err != ESP_OK) {
+        ESP_LOGE(WIFI_MANAGER_TAG, "scan prep set mode failed: 0x%X", (unsigned)prep_err);
+        return prep_err;
+    }
+
+    prep_err = esp_wifi_set_ps(WIFI_PS_NONE);
+    if (prep_err != ESP_OK) {
+        ESP_LOGE(WIFI_MANAGER_TAG, "scan prep set ps failed: 0x%X", (unsigned)prep_err);
+        return prep_err;
+    }
+
+    prep_err = esp_wifi_set_promiscuous(false);
+    if (prep_err != ESP_OK) {
+        ESP_LOGE(WIFI_MANAGER_TAG, "scan prep disable promiscuous failed: 0x%X", (unsigned)prep_err);
+        return prep_err;
+    }
+
+    prep_err = esp_wifi_scan_stop();
+    if (prep_err != ESP_OK && prep_err != ESP_ERR_WIFI_STATE) {
+        ESP_LOGE(WIFI_MANAGER_TAG, "scan prep stop previous scan failed: 0x%X", (unsigned)prep_err);
+        return prep_err;
+    }
+
+    {
+        wifi_country_t country = { 0 };
+        prep_err = esp_wifi_get_country(&country);
+        if (prep_err == ESP_OK) {
+            ESP_LOGI(
+                WIFI_MANAGER_TAG,
+                "scan country=%c%c%c schan=%u nchan=%u policy=%u",
+                country.cc[0],
+                country.cc[1],
+                country.cc[2],
+                (unsigned)country.schan,
+                (unsigned)country.nchan,
+                (unsigned)country.policy);
+        } else {
+            ESP_LOGW(WIFI_MANAGER_TAG, "scan get country failed: 0x%X", (unsigned)prep_err);
+        }
     }
 
     previous_action = s_status.action;
@@ -375,10 +438,21 @@ esp_err_t wifi_manager_scan_aps(wifi_scan_result_writer_t write_line, void *cont
         .bssid = NULL,
         .channel = 0,
         .show_hidden = true,
+        .scan_type = WIFI_SCAN_TYPE_ACTIVE,
+        .scan_time = {
+            .active = {
+                .min = 120,
+                .max = 360,
+            },
+            .passive = 0,
+        },
+        .home_chan_dwell_time = 30,
+        .coex_background_scan = true,
     };
 
     esp_err_t err = esp_wifi_scan_start(&scan_config, true);
     if (err != ESP_OK) {
+        ESP_LOGE(WIFI_MANAGER_TAG, "scan start failed: 0x%X", (unsigned)err);
         s_status.action = previous_action;
         notify_state_changed();
         return err;
@@ -386,10 +460,60 @@ esp_err_t wifi_manager_scan_aps(wifi_scan_result_writer_t write_line, void *cont
 
     err = esp_wifi_scan_get_ap_num(&total_ap_count);
     if (err != ESP_OK) {
+        ESP_LOGE(WIFI_MANAGER_TAG, "scan get ap num failed: 0x%X", (unsigned)err);
         s_status.action = previous_action;
         notify_state_changed();
         return err;
     }
+
+    if (total_ap_count == 0U) {
+        ESP_LOGW(WIFI_MANAGER_TAG, "scan active found 0 APs, retrying with passive scan");
+
+        scan_config.scan_type = WIFI_SCAN_TYPE_PASSIVE;
+        scan_config.scan_time.passive = 360;
+        scan_config.scan_time.active.min = 0;
+        scan_config.scan_time.active.max = 0;
+        scan_config.home_chan_dwell_time = 60;
+        scan_config.coex_background_scan = false;
+
+        err = esp_wifi_scan_start(&scan_config, true);
+        if (err != ESP_OK) {
+            ESP_LOGE(WIFI_MANAGER_TAG, "scan fallback start failed: 0x%X", (unsigned)err);
+            s_status.action = previous_action;
+            notify_state_changed();
+            return err;
+        }
+
+        err = esp_wifi_scan_get_ap_num(&total_ap_count);
+        if (err != ESP_OK) {
+            ESP_LOGE(WIFI_MANAGER_TAG, "scan fallback get ap num failed: 0x%X", (unsigned)err);
+            s_status.action = previous_action;
+            notify_state_changed();
+            return err;
+        }
+
+        if (total_ap_count == 0U) {
+            ESP_LOGW(WIFI_MANAGER_TAG, "scan passive found 0 APs, retrying with default driver scan config");
+
+            err = esp_wifi_scan_start(NULL, true);
+            if (err != ESP_OK) {
+                ESP_LOGE(WIFI_MANAGER_TAG, "scan default fallback start failed: 0x%X", (unsigned)err);
+                s_status.action = previous_action;
+                notify_state_changed();
+                return err;
+            }
+
+            err = esp_wifi_scan_get_ap_num(&total_ap_count);
+            if (err != ESP_OK) {
+                ESP_LOGE(WIFI_MANAGER_TAG, "scan default fallback get ap num failed: 0x%X", (unsigned)err);
+                s_status.action = previous_action;
+                notify_state_changed();
+                return err;
+            }
+        }
+    }
+
+    ESP_LOGI(WIFI_MANAGER_TAG, "scan complete: total_ap_count=%u", (unsigned)total_ap_count);
 
     if (total_ap_count < ap_count) {
         ap_count = total_ap_count;
