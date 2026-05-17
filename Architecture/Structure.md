@@ -111,3 +111,85 @@ The same mechanism handles system commands — `router.c` handles `SYS_*` and `L
 ## Shared context
 
 Core services (LED, SD, settings, UART send) are accessible as module-level singletons initialised in `main.c`. Radio modules call them directly rather than having them injected — appropriate for single-threaded embedded firmware.
+
+---
+
+## State design
+
+All runtime state lives in a single `app_state_t` struct, initialised in `main.c` and passed by pointer to every module that needs it. This gives a single source of truth, makes cancellation trivial, and lets sub-modules cache their own results cleanly.
+
+### Struct hierarchy
+
+```mermaid
+classDiagram
+    class app_state_t {
+        app_mode_t mode
+        active_op_t *active_op
+        wifi_state_t wifi
+        ble_state_t ble
+        zigbee_state_t zigbee
+        sd_state_t sd
+    }
+
+    class active_op_t {
+        TaskHandle_t task
+        volatile bool stop_requested
+    }
+
+    class wifi_state_t {
+        wifi_sub_mode_t sub_mode
+        ssid_entry_t *scan_results
+        uint8_t ssid_count
+        char connected_ip[16]
+        char connected_mac[18]
+    }
+
+    class ble_state_t {
+        ble_device_t *scan_results
+        uint8_t device_count
+        char tracked_mac[18]
+    }
+
+    class zigbee_state_t {
+        uint8_t active_channel
+        channel_stats_t *channel_stats
+        uint8_t channel_count
+    }
+
+    class sd_state_t {
+        bool present
+        bool mounted
+    }
+
+    app_state_t --> active_op_t : active_op*
+    app_state_t --> wifi_state_t
+    app_state_t --> ble_state_t
+    app_state_t --> zigbee_state_t
+    app_state_t --> sd_state_t
+```
+
+### `active_op` — cancellation
+
+When a long-running operation starts (stream or silent background), it allocates an `active_op_t`, stores its own FreeRTOS task handle in it, and sets `app_state->active_op`. The task loops checking `active_op->stop_requested`.
+
+`SYS_STOP` handling becomes:
+```c
+if (state->active_op) {
+    state->active_op->stop_requested = true;
+    // task detects flag, sends STOPPED\n, cleans up, sets active_op = NULL
+}
+```
+
+No forced task deletion — the task exits on its own terms, ensuring resources (buffers, radio state) are released cleanly.
+
+If `active_op` is `NULL` when `SYS_STOP` arrives, it is silently ignored.
+
+### Radio sub-states — cached results
+
+Each radio sub-state owns its results. Scan results persist in the sub-state until the next scan overwrites them, so the Flipper can re-request data from a completed scan without triggering a new one.
+
+The `ERR_WRONG_MODE` check at the router level means a radio's sub-state is only ever touched while that radio is active — no cross-contamination between modes.
+
+### Preventing double-init
+
+Before `SYS_MODE_SET` initialises a radio, it checks `state->mode`. If a mode is already active it returns `ERR_BUSY` rather than attempting to init on top of an existing radio stack. The only clean way to switch modes is `SYS_RESTART`.

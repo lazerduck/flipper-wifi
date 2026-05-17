@@ -65,7 +65,21 @@ This is mostly unexplored territory but here are some potential ideas
 
 ### LED
 
-The LED should change to reflect the mode and current action. E.g. Turn blue in wifi mode, blink when scanning etc
+The LED reflects the current mode and activity. Colours are grouped so sub-modes are visually related to their parent mode. Blinking always indicates active scanning or a long-running operation; solid indicates idle-in-mode.
+
+| State | Colour | RGB |
+|-------|--------|-----|
+| Booting | White pulse | 128, 128, 128 |
+| Idle (no mode) | White dim | 20, 20, 20 |
+| WiFi — idle | Green | 0, 180, 0 |
+| WiFi — promiscuous | Orange | 255, 100, 0 |
+| WiFi — connected | Purple | 140, 0, 255 |
+| BLE — idle | Blue | 0, 0, 255 |
+| ZigBee — idle | Cyan | 0, 220, 180 |
+| Any — scanning/active | Blink mode colour | — |
+| Error | Red | 255, 0, 0 |
+
+Exact values are a starting point and can be tuned. The Flipper can override the LED at any time via `LED_SET`; internal control resumes on the next mode change.
 
 ### SD card
 
@@ -103,4 +117,38 @@ After that the user enters the main menu where they can interact with the SD car
 
 At the minute our mode is undefined until the user chooses between the 3 radios. Once chosen, we init that radio and we and in that mode. Upon attempting to leave that mode (via back in the flipper app) we will trigger a restart on the ESP32 to ensure it is in a position to initialise another radio. The restart completes in under a second and the Flipper app simply waits for the next `PONG` response, making it transparent to the user
 
+## Startup sequence
 
+This is the practical boot order inside `main.c`:
+
+1. **SD card** — attempt mount; continue regardless (SD is optional)
+2. **Settings** — load from SD if mounted, otherwise apply defaults
+3. **LED** — initialise WS2812 driver, pulse white to indicate boot
+4. **UART** — start UART1 listener
+5. **Ready** — set LED to idle (dim white), begin accepting commands
+
+The firmware does not initialise any radio at boot. The Flipper sends `SYS_MODE_SET` after confirming `PING` → `PONG` to enter a radio mode.
+
+If the SD card is absent, steps 1 and 2 complete silently with defaults — no error is raised until a command explicitly requires SD access.
+
+## Life cycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> BOOTING
+    BOOTING --> IDLE
+
+    IDLE --> WIFI
+    IDLE --> BLE
+    IDLE --> ZIGBEE
+
+    WIFI --> RESTARTING
+    BLE --> RESTARTING
+    ZIGBEE --> RESTARTING
+
+    RESTARTING --> IDLE
+
+    WIFI --> ERROR
+    BLE --> ERROR
+    ZIGBEE --> ERROR
+```
