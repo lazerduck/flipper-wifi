@@ -1,0 +1,46 @@
+menu "Fuse Radio Configuration"
+
+    config FUSE_UART_PORT
+        int "UART port number"
+        default 1
+        help
+            UART port used for Flipper communication.
+            Port 0 is usually shared with the console and flash programmer.
+
+    config FUSE_UART_TX_PIN
+        int "UART TX GPIO pin"
+        default 1
+
+    config FUSE_UART_RX_PIN
+        int "UART RX GPIO pin"
+        default 0
+
+    config FUSE_UART_BAUD
+        int "UART baud rate"
+        default 115200
+
+    config FUSE_LED_PIN
+        int "WS2812 LED GPIO pin"
+        default 8
+
+    config FUSE_SD_CS_PIN
+        int "SD card chip select GPIO pin"
+        default 4
+
+    config FUSE_SD_SCK_PIN
+        int "SD card clock GPIO pin"
+        default 5
+
+    config FUSE_SD_MISO_PIN
+        int "SD card MISO GPIO pin"
+        default 6
+
+    config FUSE_SD_MOSI_PIN
+        int "SD card MOSI GPIO pin"
+        default 7
+
+    config FUSE_SD_CD_PIN
+        int "SD card card-detect GPIO pin"
+        default 2
+
+endmenu
