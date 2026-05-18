@@ -1,4 +1,7 @@
 #pragma once
 
-/* Empty stub — CONFIG_* macros are not used directly by parser.c or router.c.
- * Add specific defines here if a future test file needs them. */
+/* UART configuration — mirrors Kconfig defaults from Kconfig.projbuild */
+#define CONFIG_FUSE_UART_PORT    1
+#define CONFIG_FUSE_UART_TX_PIN  1
+#define CONFIG_FUSE_UART_RX_PIN  0
+#define CONFIG_FUSE_UART_BAUD    115200

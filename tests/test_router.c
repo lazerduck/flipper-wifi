@@ -21,6 +21,10 @@ static const char *s_last_error_code;
 static const char *s_last_module_called;
 static bool        s_ok_sent;
 
+/* esp_system stub */
+#include "esp_system.h"
+void esp_restart(void) {}
+
 /* uart mocks */
 void uart_init(app_state_t *s)          { (void)s; }
 void uart_send(const char *l)           { (void)l; }
@@ -94,6 +98,14 @@ static parsed_cmd_t make_cmd_2(char *t0, char *t1)
     return cmd;
 }
 
+static parsed_cmd_t make_cmd_3(char *t0, char *t1, char *t2)
+{
+    parsed_cmd_t cmd = make_cmd_2(t0, t1);
+    cmd.tokens[2]  = t2;
+    cmd.token_count = 3;
+    return cmd;
+}
+
 /* ─── Test setup ──────────────────────────────────────────────────────────── */
 
 void setUp(void)
@@ -128,42 +140,71 @@ void test_router_dispatch_does_not_crash(void)
 
 void test_ping_replies_with_pong(void)
 {
-    TEST_IGNORE_MESSAGE("Implement router_dispatch() — PING → uart_send_ok_with(msg=PONG)");
+    app_state_t  state = { .mode = APP_MODE_IDLE, .active_op = NULL };
+    parsed_cmd_t cmd   = make_cmd_1("PING");
+    router_dispatch(&cmd, &state);
+    TEST_ASSERT_TRUE(s_ok_sent);
 }
 
 void test_unknown_command_sends_err_unknown_cmd(void)
 {
-    TEST_IGNORE_MESSAGE("Implement router_dispatch() — BLOOP → uart_send_error(ERR_UNKNOWN_CMD)");
+    app_state_t  state = { .mode = APP_MODE_IDLE, .active_op = NULL };
+    parsed_cmd_t cmd   = make_cmd_1("BLOOP");
+    router_dispatch(&cmd, &state);
+    TEST_ASSERT_EQUAL_STRING("ERR_UNKNOWN_CMD", s_last_error_code);
 }
 
 void test_wifi_command_forwarded_to_wifi_module(void)
 {
-    TEST_IGNORE_MESSAGE("Implement router_dispatch() — WIFI_SCAN → wifi_handle_command(); s_last_module_called == WIFI");
+    app_state_t  state = { .mode = APP_MODE_WIFI, .active_op = NULL };
+    parsed_cmd_t cmd   = make_cmd_2("WIFI", "SCAN");
+    router_dispatch(&cmd, &state);
+    TEST_ASSERT_EQUAL_STRING("WIFI", s_last_module_called);
 }
 
 void test_ble_command_forwarded_to_ble_module(void)
 {
-    TEST_IGNORE_MESSAGE("Implement router_dispatch() — BLE_SCAN → ble_handle_command(); s_last_module_called == BLE");
+    app_state_t  state = { .mode = APP_MODE_BLE, .active_op = NULL };
+    parsed_cmd_t cmd   = make_cmd_2("BLE", "SCAN");
+    router_dispatch(&cmd, &state);
+    TEST_ASSERT_EQUAL_STRING("BLE", s_last_module_called);
 }
 
 void test_zigbee_command_forwarded_to_zigbee_module(void)
 {
-    TEST_IGNORE_MESSAGE("Implement router_dispatch() — ZIGBEE_CHANNEL_SCAN → zigbee_handle_command(); s_last_module_called == ZIGBEE");
+    app_state_t  state = { .mode = APP_MODE_ZIGBEE, .active_op = NULL };
+    parsed_cmd_t cmd   = make_cmd_2("ZIGBEE", "CHANNEL_SCAN");
+    router_dispatch(&cmd, &state);
+    TEST_ASSERT_EQUAL_STRING("ZIGBEE", s_last_module_called);
 }
 
 void test_sys_stop_with_no_active_op_is_silent(void)
 {
-    TEST_IGNORE_MESSAGE("Implement router_dispatch() — SYS_STOP with active_op==NULL produces no UART output");
+    app_state_t  state = { .mode = APP_MODE_IDLE, .active_op = NULL };
+    parsed_cmd_t cmd   = make_cmd_2("SYS", "STOP");
+    router_dispatch(&cmd, &state);
+    TEST_ASSERT_FALSE(s_ok_sent);
+    TEST_ASSERT_NULL(s_last_error_code);
 }
 
 void test_sys_mode_set_wifi_calls_wifi_init(void)
 {
-    TEST_IGNORE_MESSAGE("Implement router_dispatch() — SYS_MODE_SET mode=WIFI → wifi_init() called; state->mode == APP_MODE_WIFI");
+    app_state_t  state = { .mode = APP_MODE_IDLE, .active_op = NULL };
+    parsed_cmd_t cmd   = make_cmd_3("SYS", "MODE", "SET");
+    cmd.args[0].key    = "mode";
+    cmd.args[0].value  = "WIFI";
+    cmd.arg_count      = 1;
+    router_dispatch(&cmd, &state);
+    TEST_ASSERT_EQUAL_INT(APP_MODE_WIFI, state.mode);
+    TEST_ASSERT_TRUE(s_ok_sent);
 }
 
 void test_command_rejected_in_wrong_mode(void)
 {
-    TEST_IGNORE_MESSAGE("Implement router_dispatch() — WIFI_SCAN in BLE mode → uart_send_error(ERR_WRONG_MODE)");
+    app_state_t  state = { .mode = APP_MODE_BLE, .active_op = NULL };
+    parsed_cmd_t cmd   = make_cmd_2("WIFI", "SCAN");
+    router_dispatch(&cmd, &state);
+    TEST_ASSERT_EQUAL_STRING("ERR_WRONG_MODE", s_last_error_code);
 }
 
 int main(void)

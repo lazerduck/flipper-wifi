@@ -50,3 +50,13 @@ target_link_libraries(test_router PRIVATE unity)
 enable_testing()
 add_test(NAME parser_tests COMMAND test_parser)
 add_test(NAME router_tests COMMAND test_router)
+
+# ── test_uart — uart.c compiled; ESP-IDF driver and FreeRTOS task functions ──
+# ──            are stubbed inside test_uart.c itself                         ──
+add_executable(test_uart
+    test_uart.c
+    ${MAIN_DIR}/uart.c
+)
+target_include_directories(test_uart PRIVATE ${COMMON_INCLUDES})
+target_link_libraries(test_uart PRIVATE unity)
+add_test(NAME uart_tests COMMAND test_uart)

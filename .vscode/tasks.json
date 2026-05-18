@@ -1,6 +1,35 @@
 {
     "tasks": [
         {
+            "label": "Test: Configure",
+            "detail": "One-time CMake configure for the host test project (fetches Unity)",
+            "type": "shell",
+            "command": "cmake -B tests/build -S tests",
+            "options": { "cwd": "${workspaceFolder}" },
+            "group": "test",
+            "presentation": { "reveal": "always", "panel": "shared" },
+            "problemMatcher": []
+        },
+        {
+            "label": "Test: Build & Run",
+            "detail": "Build and run parser + router tests; failures appear in the Problems panel",
+            "type": "shell",
+            "command": "cmake --build tests/build --parallel && ./tests/build/test_parser ; ./tests/build/test_router",
+            "options": { "cwd": "${workspaceFolder}" },
+            "group": { "kind": "test", "isDefault": true },
+            "presentation": { "reveal": "always", "panel": "shared" },
+            "problemMatcher": {
+                "owner": "unity",
+                "fileLocation": "absolute",
+                "pattern": {
+                    "regexp": "^(.+\\.c):(\\d+):[^:]+:FAIL:(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "message": 3
+                }
+            }
+        },
+        {
             "label": "ESP-IDF: Build Project",
             "type": "shell",
             "command": ".",
