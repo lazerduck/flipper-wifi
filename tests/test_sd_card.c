@@ -55,7 +55,7 @@ void router_dispatch(const parsed_cmd_t *c, app_state_t *s) { (void)c; (void)s; 
 
 /* ─── Test helpers ───────────────────────────────────────────────────────── */
 
-#define SD_ROOT "/tmp/test_sd"
+#define SD_TEST_ROOT SD_ROOT
 
 static void reset_tx(void)
 {
@@ -89,20 +89,20 @@ static void add_arg(parsed_cmd_t *cmd, char *key, char *value)
 static void write_test_file(const char *rel_path, const char *content)
 {
     char full[256];
-    snprintf(full, sizeof(full), "%s%s", SD_ROOT, rel_path);
+    snprintf(full, sizeof(full), "%s%s", SD_TEST_ROOT, rel_path);
     FILE *f = fopen(full, "w");
     if (f) { fputs(content, f); fclose(f); }
 }
 
 void setUp(void)
 {
-    system("rm -rf " SD_ROOT " && mkdir -p " SD_ROOT);
+    system("rm -rf " SD_TEST_ROOT " && mkdir -p " SD_TEST_ROOT);
     reset_tx();
 }
 
 void tearDown(void)
 {
-    system("rm -rf " SD_ROOT);
+    system("rm -rf " SD_TEST_ROOT);
 }
 
 /* ─── sd_handle_command — STATUS ─────────────────────────────────────────── */
@@ -167,7 +167,7 @@ void test_list_shows_file_entry(void)
 void test_list_shows_directory_entry(void)
 {
     char dir[128];
-    snprintf(dir, sizeof(dir), "%s/logs", SD_ROOT);
+    snprintf(dir, sizeof(dir), "%s/logs", SD_TEST_ROOT);
     mkdir(dir, 0755);
 
     sd_state_t sd = { .present = true, .mounted = true };
@@ -239,7 +239,7 @@ void test_write_creates_file(void)
     TEST_ASSERT_EQUAL_STRING("S\n", tx_str());
 
     char buf[64];
-    TEST_ASSERT_TRUE(sd_read_file(SD_ROOT "/out.txt", buf, sizeof(buf)));
+    TEST_ASSERT_TRUE(sd_read_file(SD_TEST_ROOT "/out.txt", buf, sizeof(buf)));
     TEST_ASSERT_EQUAL_STRING("saved content", buf);
 }
 
@@ -253,7 +253,7 @@ void test_write_overwrites_existing(void)
     sd_handle_command(&cmd, &sd);
 
     char buf[32];
-    sd_read_file(SD_ROOT "/over.txt", buf, sizeof(buf));
+    sd_read_file(SD_TEST_ROOT "/over.txt", buf, sizeof(buf));
     TEST_ASSERT_EQUAL_STRING("new", buf);
 }
 
@@ -286,7 +286,7 @@ void test_append_accumulates_content(void)
     TEST_ASSERT_EQUAL_STRING("S\n", tx_str());
 
     char buf[64];
-    sd_read_file(SD_ROOT "/log.txt", buf, sizeof(buf));
+    sd_read_file(SD_TEST_ROOT "/log.txt", buf, sizeof(buf));
     TEST_ASSERT_NOT_NULL(strstr(buf, "line1"));
     TEST_ASSERT_NOT_NULL(strstr(buf, "line2"));
 }
@@ -302,7 +302,7 @@ void test_mkdir_creates_directory(void)
     TEST_ASSERT_EQUAL_STRING("S\n", tx_str());
 
     struct stat st;
-    TEST_ASSERT_EQUAL_INT(0, stat(SD_ROOT "/newdir", &st));
+    TEST_ASSERT_EQUAL_INT(0, stat(SD_TEST_ROOT "/newdir", &st));
     TEST_ASSERT_TRUE(S_ISDIR(st.st_mode));
 }
 
@@ -326,13 +326,13 @@ void test_delete_removes_file(void)
     TEST_ASSERT_EQUAL_STRING("S\n", tx_str());
 
     struct stat st;
-    TEST_ASSERT_NOT_EQUAL(0, stat(SD_ROOT "/del.txt", &st));
+    TEST_ASSERT_NOT_EQUAL(0, stat(SD_TEST_ROOT "/del.txt", &st));
 }
 
 void test_delete_removes_empty_dir(void)
 {
     char dir[128];
-    snprintf(dir, sizeof(dir), "%s/emptydir", SD_ROOT);
+    snprintf(dir, sizeof(dir), "%s/emptydir", SD_TEST_ROOT);
     mkdir(dir, 0755);
 
     sd_state_t sd = { .present = true, .mounted = true };
@@ -354,7 +354,7 @@ void test_delete_nonexistent_returns_error(void)
 void test_delete_nonempty_dir_returns_error(void)
 {
     char dir[128];
-    snprintf(dir, sizeof(dir), "%s/full", SD_ROOT);
+    snprintf(dir, sizeof(dir), "%s/full", SD_TEST_ROOT);
     mkdir(dir, 0755);
     char f[160];
     snprintf(f, sizeof(f), "%s/x.txt", dir);
@@ -382,33 +382,33 @@ void test_format_succeeds_when_mounted(void)
 
 void test_sd_read_write_helpers(void)
 {
-    TEST_ASSERT_TRUE(sd_write_file(SD_ROOT "/rw.txt", "abc"));
+    TEST_ASSERT_TRUE(sd_write_file(SD_TEST_ROOT "/rw.txt", "abc"));
     char buf[16];
-    TEST_ASSERT_TRUE(sd_read_file(SD_ROOT "/rw.txt", buf, sizeof(buf)));
+    TEST_ASSERT_TRUE(sd_read_file(SD_TEST_ROOT "/rw.txt", buf, sizeof(buf)));
     TEST_ASSERT_EQUAL_STRING("abc", buf);
 }
 
 void test_sd_append_helper(void)
 {
-    sd_write_file(SD_ROOT "/app.txt", "A");
-    sd_append_file(SD_ROOT "/app.txt", "B");
+    sd_write_file(SD_TEST_ROOT "/app.txt", "A");
+    sd_append_file(SD_TEST_ROOT "/app.txt", "B");
     char buf[16];
-    sd_read_file(SD_ROOT "/app.txt", buf, sizeof(buf));
+    sd_read_file(SD_TEST_ROOT "/app.txt", buf, sizeof(buf));
     TEST_ASSERT_EQUAL_STRING("AB", buf);
 }
 
 void test_sd_delete_helper(void)
 {
-    sd_write_file(SD_ROOT "/gone.txt", "x");
-    TEST_ASSERT_TRUE(sd_delete_file(SD_ROOT "/gone.txt"));
-    TEST_ASSERT_FALSE(sd_delete_file(SD_ROOT "/gone.txt")); /* already gone */
+    sd_write_file(SD_TEST_ROOT "/gone.txt", "x");
+    TEST_ASSERT_TRUE(sd_delete_file(SD_TEST_ROOT "/gone.txt"));
+    TEST_ASSERT_FALSE(sd_delete_file(SD_TEST_ROOT "/gone.txt")); /* already gone */
 }
 
 void test_sd_mkdir_helper(void)
 {
-    TEST_ASSERT_TRUE(sd_mkdir(SD_ROOT "/sub"));
+    TEST_ASSERT_TRUE(sd_mkdir(SD_TEST_ROOT "/sub"));
     struct stat st;
-    TEST_ASSERT_EQUAL_INT(0, stat(SD_ROOT "/sub", &st));
+    TEST_ASSERT_EQUAL_INT(0, stat(SD_TEST_ROOT "/sub", &st));
     TEST_ASSERT_TRUE(S_ISDIR(st.st_mode));
 }
 

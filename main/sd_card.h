@@ -4,6 +4,15 @@
 #include <stdbool.h>
 #include "types.h"
 
+/* Mount point used by all SD helpers.  Modules that build full paths should
+ * use this rather than hardcoding "/sdcard".
+ * e.g.  sd_write_file(SD_ROOT "/settings.json", buf); */
+#if defined(UNIT_TEST)
+#  define SD_ROOT "/tmp/test_sd"
+#else
+#  define SD_ROOT "/sdcard"
+#endif
+
 /*
  * sd_card.h — SD card mount, file I/O, and UART command handling.
  *

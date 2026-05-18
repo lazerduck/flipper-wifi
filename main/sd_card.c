@@ -19,13 +19,6 @@
 #include <sys/stat.h>
 #include <dirent.h>
 
-/* Mount point: "/sdcard" on device; "/tmp/test_sd" when UNIT_TEST is set.   */
-#if defined(UNIT_TEST)
-#  define SD_MOUNT_POINT "/tmp/test_sd"
-#elif !defined(SD_MOUNT_POINT)
-#  define SD_MOUNT_POINT "/sdcard"
-#endif
-
 /* Maximum characters read per line in SD_READ (fits in the UART line buffer) */
 #define SD_LINE_MAX 255
 
@@ -83,7 +76,7 @@ static void sd_cmd_status(const sd_state_t *sd)
     unsigned long free_kb = 0;
     if (sd->mounted) {
         uint64_t total = 0, free_bytes = 0;
-        esp_vfs_fat_info(SD_MOUNT_POINT, &total, &free_bytes);
+        esp_vfs_fat_info(SD_ROOT, &total, &free_bytes);
         free_kb = (unsigned long)(free_bytes / 1024);
     }
     snprintf(buf, sizeof(buf),
@@ -91,6 +84,7 @@ static void sd_cmd_status(const sd_state_t *sd)
              sd->present ? "true" : "false",
              sd->mounted ? "true" : "false",
              free_kb);
+    (void)sd; /* suppress unused warning in non-UNIT_TEST path */
 #else
     snprintf(buf, sizeof(buf),
              "present=\"%s\" mounted=\"%s\" free_kb=\"0\"",
@@ -108,7 +102,7 @@ static void sd_cmd_list(const parsed_cmd_t *cmd, const sd_state_t *sd)
     if (!path) path = "/";
 
     char full[256];
-    snprintf(full, sizeof(full), "%s%s", SD_MOUNT_POINT, path);
+    snprintf(full, sizeof(full), "%s%s", SD_ROOT, path);
 
     DIR *dir = opendir(full);
     if (!dir) {
@@ -157,7 +151,7 @@ static void sd_cmd_read(const parsed_cmd_t *cmd, const sd_state_t *sd)
     if (!path) { uart_send_error("ERR_MISSING_ARG"); return; }
 
     char full[256];
-    snprintf(full, sizeof(full), "%s%s", SD_MOUNT_POINT, path);
+    snprintf(full, sizeof(full), "%s%s", SD_ROOT, path);
 
     FILE *f = fopen(full, "r");
     if (!f) {
@@ -188,7 +182,7 @@ static void sd_cmd_write(const parsed_cmd_t *cmd, const sd_state_t *sd)
     if (!path || !data) { uart_send_error("ERR_MISSING_ARG"); return; }
 
     char full[256];
-    snprintf(full, sizeof(full), "%s%s", SD_MOUNT_POINT, path);
+    snprintf(full, sizeof(full), "%s%s", SD_ROOT, path);
 
     sd_write_file(full, data) ? uart_send_ok() : uart_send_error("ERR_SD_WRITE_FAIL");
 }
@@ -201,7 +195,7 @@ static void sd_cmd_append(const parsed_cmd_t *cmd, const sd_state_t *sd)
     if (!path || !data) { uart_send_error("ERR_MISSING_ARG"); return; }
 
     char full[256];
-    snprintf(full, sizeof(full), "%s%s", SD_MOUNT_POINT, path);
+    snprintf(full, sizeof(full), "%s%s", SD_ROOT, path);
 
     sd_append_file(full, data) ? uart_send_ok() : uart_send_error("ERR_SD_WRITE_FAIL");
 }
@@ -213,7 +207,7 @@ static void sd_cmd_mkdir(const parsed_cmd_t *cmd, const sd_state_t *sd)
     if (!path) { uart_send_error("ERR_MISSING_ARG"); return; }
 
     char full[256];
-    snprintf(full, sizeof(full), "%s%s", SD_MOUNT_POINT, path);
+    snprintf(full, sizeof(full), "%s%s", SD_ROOT, path);
 
     sd_mkdir(full) ? uart_send_ok() : uart_send_error("ERR_SD_WRITE_FAIL");
 }
@@ -225,7 +219,7 @@ static void sd_cmd_delete(const parsed_cmd_t *cmd, const sd_state_t *sd)
     if (!path) { uart_send_error("ERR_MISSING_ARG"); return; }
 
     char full[256];
-    snprintf(full, sizeof(full), "%s%s", SD_MOUNT_POINT, path);
+    snprintf(full, sizeof(full), "%s%s", SD_ROOT, path);
 
     if (remove(full) == 0) { uart_send_ok(); return; }
 
@@ -240,7 +234,7 @@ static void sd_cmd_format(sd_state_t *sd)
 {
     RETURN_IF_NOT_MOUNTED(sd);
 #ifndef UNIT_TEST
-    esp_err_t ret = esp_vfs_fat_sdcard_format(SD_MOUNT_POINT, NULL);
+    esp_err_t ret = esp_vfs_fat_sdcard_format(SD_ROOT, NULL);
     ret == ESP_OK ? uart_send_ok() : uart_send_error("ERR_SD_WRITE_FAIL");
 #else
     uart_send_ok();
@@ -309,7 +303,7 @@ void sd_init(sd_state_t *sd)
         .allocation_unit_size   = 16 * 1024,
     };
 
-    esp_err_t ret = esp_vfs_fat_sdspi_mount(SD_MOUNT_POINT, &host,
+    esp_err_t ret = esp_vfs_fat_sdspi_mount(SD_ROOT, &host,
                                              &slot_cfg, &mount_cfg, &s_card);
     if (ret == ESP_OK) sd->mounted = true;
 }
