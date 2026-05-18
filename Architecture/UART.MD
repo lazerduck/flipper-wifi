@@ -206,7 +206,14 @@ The ESP32 boots in `IDLE` mode with no radio initialised. The typical Flipper se
 |---------|-----------|-----------------|-------------|
 | `SD_STATUS` | — | `S present="true" mounted="true" free_kb="14200"` | — |
 | `SD_LIST` | `path="/"` | `S STREAM` → `DATA name="log.txt" size="1024" dir="false"` | `ERR_SD_NOT_MOUNTED`, `ERR_SD_PATH_NOT_FOUND` |
+| `SD_READ` | `path="/log.txt"` | `S STREAM` → `DATA line="<text>"` | `ERR_SD_NOT_MOUNTED`, `ERR_SD_PATH_NOT_FOUND`, `ERR_MISSING_ARG` |
+| `SD_WRITE` | `path="/file.txt" data="<text>"` | `S` | `ERR_SD_NOT_MOUNTED`, `ERR_SD_WRITE_FAIL`, `ERR_MISSING_ARG` |
+| `SD_APPEND` | `path="/log.txt" data="<text>"` | `S` | `ERR_SD_NOT_MOUNTED`, `ERR_SD_WRITE_FAIL`, `ERR_MISSING_ARG` |
+| `SD_MKDIR` | `path="/logs"` | `S` | `ERR_SD_NOT_MOUNTED`, `ERR_SD_WRITE_FAIL`, `ERR_MISSING_ARG` |
+| `SD_DELETE` | `path="/file.txt"` | `S` | `ERR_SD_NOT_MOUNTED`, `ERR_SD_PATH_NOT_FOUND`, `ERR_SD_NOT_EMPTY` |
 | `SD_FORMAT` | — | `S` | `ERR_SD_NOT_MOUNTED`, `ERR_SD_WRITE_FAIL` |
+
+`SD_READ` streams the file line by line (one `DATA line="..."` per line, then `END`). Lines are truncated at 255 characters. `SD_DELETE` removes files and empty directories; returns `ERR_SD_NOT_EMPTY` for non-empty directories.
 
 ### LED
 

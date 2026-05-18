@@ -60,3 +60,17 @@ add_executable(test_uart
 target_include_directories(test_uart PRIVATE ${COMMON_INCLUDES})
 target_link_libraries(test_uart PRIVATE unity)
 add_test(NAME uart_tests COMMAND test_uart)
+
+# ── test_sd_card — sd_card.c + uart.c + parser.c compiled; ESP-IDF SPI/VFS ──
+# ──               and FreeRTOS calls are stubbed in test_sd_card.c; UNIT_TEST ─
+# ──               guards sd_init() and esp_vfs_fat_* in sd_card.c             ─
+add_executable(test_sd_card
+    test_sd_card.c
+    ${MAIN_DIR}/sd_card.c
+    ${MAIN_DIR}/uart.c
+    ${MAIN_DIR}/parser.c
+)
+target_include_directories(test_sd_card PRIVATE ${COMMON_INCLUDES})
+target_link_libraries(test_sd_card PRIVATE unity)
+target_compile_definitions(test_sd_card PRIVATE UNIT_TEST)
+add_test(NAME sd_card_tests COMMAND test_sd_card)
