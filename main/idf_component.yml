@@ -1,0 +1,19 @@
+## IDF Component Manager Manifest File
+dependencies:
+  idf: ">=6.0.0"
+
+  ## WS2812 LED strip driver (RMT-backed)
+  espressif/led_strip:
+    version: "*"
+
+  ## ZigBee / IEEE 802.15.4 stack
+  ## NOTE: IDF 6 + this lib requires mbedTLS v4 compatibility shims —
+  ##       see Architecture/Structure.md and repo memory zigbee-scaffold.md
+  espressif/esp-zigbee-lib:
+    version: "*"
+
+  ## esp-zboss-lib is a required transitive dependency of esp-zigbee-lib;
+  ## the IDF component manager does not resolve it automatically so we must
+  ## declare it here explicitly.
+  espressif/esp-zboss-lib:
+    version: "*"
