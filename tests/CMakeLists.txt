@@ -74,3 +74,16 @@ target_include_directories(test_sd_card PRIVATE ${COMMON_INCLUDES})
 target_link_libraries(test_sd_card PRIVATE unity)
 target_compile_definitions(test_sd_card PRIVATE UNIT_TEST)
 add_test(NAME sd_card_tests COMMAND test_sd_card)
+
+# ── test_settings — settings.c + uart.c + parser.c compiled; hardware stubs ─
+# ──                 and parser/router no-ops are in test_settings.c itself   ─
+add_executable(test_settings
+    test_settings.c
+    ${MAIN_DIR}/settings.c
+    ${MAIN_DIR}/uart.c
+    ${MAIN_DIR}/parser.c
+)
+target_include_directories(test_settings PRIVATE ${COMMON_INCLUDES})
+target_link_libraries(test_settings PRIVATE unity)
+target_compile_definitions(test_settings PRIVATE UNIT_TEST)
+add_test(NAME settings_tests COMMAND test_settings)
