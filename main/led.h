@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 #include "types.h"
+#include "parser.h"
 
 /*
  * led.h — WS2812 RGB LED driver.
@@ -31,3 +32,6 @@ void led_blink_start(void);
 
 /* Stop blinking and return to a solid colour. */
 void led_blink_stop(void);
+
+/* Handle an LED_* UART command (called from router). */
+void led_handle_command(const parsed_cmd_t *cmd);

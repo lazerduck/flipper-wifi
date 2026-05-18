@@ -110,14 +110,9 @@ void router_dispatch(const parsed_cmd_t *cmd, app_state_t *state)
         return;
     }
 
-    /* ── LED_SET ───────────────────────────────────────────────────────────── */
+    /* ── LED_* ─────────────────────────────────────────────────────────────── */
     if (strcmp(t0, "LED") == 0) {
-        const char *r = parser_get_arg(cmd, "r");
-        const char *g = parser_get_arg(cmd, "g");
-        const char *b = parser_get_arg(cmd, "b");
-        if (!r || !g || !b) { uart_send_error("ERR_MISSING_ARG"); return; }
-        led_set((uint8_t)atoi(r), (uint8_t)atoi(g), (uint8_t)atoi(b));
-        uart_send_ok();
+        led_handle_command(cmd);
         return;
     }
 
