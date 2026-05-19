@@ -50,8 +50,7 @@ bool app_scene_main_menu_on_event(void* ctx, SceneManagerEvent event) {
             consumed = true;
             break;
         case MainMenuIndexSdCard:
-        case MainMenuIndexSettings:
-            /* Sub-scenes will be wired in as features are implemented */
+            scene_manager_next_scene(app->scene_manager, AppSceneSdCard);
             consumed = true;
             break;
         default:

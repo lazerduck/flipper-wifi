@@ -41,6 +41,14 @@ App* app_alloc(void) {
     view_allocate_model(app->led_view, ViewModelTypeLocking, sizeof(App*));
     view_dispatcher_add_view(app->view_dispatcher, AppViewLed, app->led_view);
 
+    app->sd_details_view = view_alloc();
+    view_allocate_model(app->sd_details_view, ViewModelTypeLocking, sizeof(App*));
+    view_dispatcher_add_view(app->view_dispatcher, AppViewSdDetails, app->sd_details_view);
+
+    app->sd_explorer_view = view_alloc();
+    view_allocate_model(app->sd_explorer_view, ViewModelTypeLocking, sizeof(App*));
+    view_dispatcher_add_view(app->view_dispatcher, AppViewSdExplorer, app->sd_explorer_view);
+
     app->uart         = NULL;
     app->boot_timer   = NULL;
     app->boot_state   = BootStateIdle;
@@ -51,6 +59,20 @@ App* app_alloc(void) {
     app->led_channel  = 0;
     app->led_on       = true;
 
+    app->sd_present        = false;
+    app->sd_mounted        = false;
+    app->sd_free_kb        = 0;
+    app->sd_total_kb       = 0;
+    app->sd_fs_type[0]     = '\0';
+    app->sd_path[0]        = '/';
+    app->sd_path[1]        = '\0';
+    app->sd_action_path[0] = '\0';
+    app->sd_entry_count    = 0;
+    app->sd_entry_selected = 0;
+    app->sd_scroll_offset  = 0;
+    app->sd_stream_done    = false;
+    app->sd_format_step    = SdFormatIdle;
+
     return app;
 }
 
@@ -59,10 +81,14 @@ void app_free(App* app) {
     view_dispatcher_remove_view(app->view_dispatcher, AppViewPopup);
     view_dispatcher_remove_view(app->view_dispatcher, AppViewDialogEx);
     view_dispatcher_remove_view(app->view_dispatcher, AppViewLed);
+    view_dispatcher_remove_view(app->view_dispatcher, AppViewSdDetails);
+    view_dispatcher_remove_view(app->view_dispatcher, AppViewSdExplorer);
     submenu_free(app->submenu);
     popup_free(app->popup);
     dialog_ex_free(app->dialog_ex);
     view_free(app->led_view);
+    view_free(app->sd_details_view);
+    view_free(app->sd_explorer_view);
     view_dispatcher_free(app->view_dispatcher);
     scene_manager_free(app->scene_manager);
 

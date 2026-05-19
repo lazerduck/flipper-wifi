@@ -80,6 +80,11 @@ AppUart* app_uart_alloc(UartLineCallback cb, void* context) {
     return uart;
 }
 
+void app_uart_set_callback(AppUart* uart, UartLineCallback cb, void* context) {
+    uart->line_cb     = cb;
+    uart->line_cb_ctx = context;
+}
+
 void app_uart_free(AppUart* uart) {
     /* Stop serial first so no more ISR callbacks fire */
     furi_hal_serial_async_rx_stop(uart->handle);

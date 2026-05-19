@@ -14,5 +14,8 @@ typedef void (*UartLineCallback)(const char* line, void* context);
 AppUart* app_uart_alloc(UartLineCallback cb, void* context);
 void     app_uart_free(AppUart* uart);
 
+/* Swap the line callback at runtime (e.g. when entering a new scene). */
+void     app_uart_set_callback(AppUart* uart, UartLineCallback cb, void* context);
+
 /* Send a pre-formatted line; caller must include the trailing '\n'. */
 void app_uart_send(AppUart* uart, const char* line);

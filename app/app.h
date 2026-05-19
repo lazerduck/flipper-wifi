@@ -25,6 +25,8 @@ typedef enum {
     AppViewPopup,
     AppViewDialogEx,
     AppViewLed,
+    AppViewSdDetails,
+    AppViewSdExplorer,
 } AppView;
 
 typedef enum {
@@ -33,6 +35,25 @@ typedef enum {
     BootStateWaitPong,  /* PING sent, waiting for PONG */
     BootStateFailed,
 } BootState;
+
+/* ── SD card entry (one row in a directory listing) ────────────────────── */
+#define SD_MAX_ENTRIES 64u
+
+typedef struct {
+    char     name[64];
+    uint32_t size_bytes;
+    bool     is_dir;
+} SdEntry;
+
+/* Two-step format confirmation state */
+typedef enum {
+    SdFormatIdle,
+    SdFormatConfirm1,
+    SdFormatConfirm2,
+    SdFormatRunning,
+    SdFormatDone,
+    SdFormatFailed,
+} SdFormatStep;
 
 typedef struct {
     SceneManager*   scene_manager;
@@ -49,6 +70,25 @@ typedef struct {
     uint8_t         led_r, led_g, led_b;   /* 0-240, step 16 */
     uint8_t         led_channel;           /* 0=R 1=G 2=B    */
     bool            led_on;
+    /* SD Card scenes */
+    View*           sd_details_view;
+    View*           sd_explorer_view;
+    /* SD status (filled by SD_STATUS / SD_REMOUNT response) */
+    bool            sd_present;
+    bool            sd_mounted;
+    uint32_t        sd_free_kb;
+    uint32_t        sd_total_kb;
+    char            sd_fs_type[8];
+    /* SD explorer state */
+    char            sd_path[256];          /* current directory, always starts with "/" */
+    char            sd_action_path[320];   /* full path of the file selected for action */
+    SdEntry         sd_entries[SD_MAX_ENTRIES];
+    uint16_t        sd_entry_count;
+    uint16_t        sd_entry_selected;
+    uint16_t        sd_scroll_offset;
+    bool            sd_stream_done;        /* true once END is received */
+    /* SD format state */
+    SdFormatStep    sd_format_step;
 } App;
 
 App* app_alloc(void);
